@@ -106,3 +106,279 @@ def _normaliser_ville(valeur) -> str | None:
     if cle in _VARIANTES_PN:
         return "Pointe-Noire"
     return str(valeur).strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSFORMATION VENTES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def transformer_ventes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """
+    Nettoie et restructure le DataFrame brut des ventes.
+
+    Retourne un dictionnaire de 4 DataFrames prêts pour l'insertion
+    dans schema_analytics (sans résolution des IDs — rôle de load.py) :
+        'clients'  → table client
+        'employes' → table employe
+        'factures' → table facture
+        'lignes'   → table ligne_facture
+    """
+    print("\n-- TRANSFORMATION VENTES ---------------------------------------")
+    df = df.copy()
+    n_initial = len(df)
+
+    # ── ÉTAPE 1 : Parsage des dates ──────────────────────────────────────────
+    df["date_facture"] = df["Date"].apply(_parser_date)
+
+    # ── ÉTAPE 2 : Normalisation du type de service ───────────────────────────
+    df["service"] = df["Service_Type"].apply(_normaliser_service)
+
+    # ── ÉTAPE 3 : Suppression des lignes sans date ni client ─────────────────
+    # Ces lignes sont inutilisables : impossible de les rattacher à une facture
+    df = df.dropna(subset=["date_facture", "Client"])
+    print(f"  Lignes supprimées (date ou client manquant) : {n_initial - len(df)}")
+
+    # ── ÉTAPE 4 : Dédoublonnage sur Facture_ID ───────────────────────────────
+    # On garde la première occurrence de chaque facture (doublons Excel ~5%)
+    n_avant = len(df)
+    df = df.drop_duplicates(subset=["Facture_ID"], keep="first")
+    print(f"  Doublons supprimés                         : {n_avant - len(df)}")
+
+    # ── ÉTAPE 5 : Recalcul du Total quand incohérent ─────────────────────────
+    # Les valeurs 0, 999 ou NaN dans Total sont remplacées par Quantite × Prix
+    df["Prix_Unitaire"] = pd.to_numeric(df["Prix_Unitaire"], errors="coerce")
+    df["Quantite"]      = pd.to_numeric(df["Quantite"],      errors="coerce")
+    df["Total"]         = pd.to_numeric(df["Total"],          errors="coerce")
+
+    masque_incoherent = (
+        df["Total"].isna() |
+        (df["Total"] == 0)  |
+        (df["Total"] == 999)
+    )
+    df.loc[masque_incoherent, "Total"] = (
+        df.loc[masque_incoherent, "Quantite"] *
+        df.loc[masque_incoherent, "Prix_Unitaire"]
+    )
+    print(f"  Totaux recalculés                          : {masque_incoherent.sum()}")
+
+    # ── ÉTAPE 6 : Cast des types numériques finaux ───────────────────────────
+    df["Quantite"]      = df["Quantite"].astype("Int64")   # Int64 tolère les NaN
+    df["Prix_Unitaire"] = df["Prix_Unitaire"].round(2)
+    df["Total"]         = df["Total"].round(2)
+
+    print(f"  Lignes propres conservées                  : {len(df)}")
+
+    # ── ÉTAPE 7 : Extraction des 4 DataFrames normalisés ─────────────────────
+
+    # Clients uniques extraits des ventes
+    df_clients = (
+        df[["Client", "Telephone"]]
+        .drop_duplicates(subset=["Client"])
+        .rename(columns={"Client": "nom_client", "Telephone": "telephone"})
+        .reset_index(drop=True)
+    )
+
+    # Employés uniques (on ignore les lignes sans employé assigné)
+    df_employes = (
+        df[["Employe_En_Charge"]]
+        .dropna(subset=["Employe_En_Charge"])
+        .drop_duplicates()
+        .rename(columns={"Employe_En_Charge": "nom_employe"})
+        .reset_index(drop=True)
+    )
+
+    # Factures : une ligne par commande
+    df_factures = (
+        df[["Facture_ID", "date_facture", "Statut_Paiement", "Client", "Employe_En_Charge"]]
+        .rename(columns={
+            "Facture_ID":        "facture_id",
+            "Statut_Paiement":   "statut_paiement",
+            "Client":            "nom_client",
+            "Employe_En_Charge": "nom_employe",
+        })
+        .reset_index(drop=True)
+    )
+
+    # Lignes de facture : description, quantités, prix, service
+    df_lignes = (
+        df[["Facture_ID", "Description", "Quantite", "Prix_Unitaire", "Total", "service"]]
+        .rename(columns={
+            "Facture_ID":    "facture_id",
+            "Description":   "description",
+            "Quantite":      "quantite",
+            "Prix_Unitaire": "prix_unitaire",
+            "Total":         "total_ligne",
+            "service":       "service_libelle",
+        })
+        .reset_index(drop=True)
+    )
+
+    print("-- FIN TRANSFORMATION VENTES -----------------------------------\n")
+
+    return {
+        "clients":  df_clients,
+        "employes": df_employes,
+        "factures": df_factures,
+        "lignes":   df_lignes,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSFORMATION DÉPENSES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def transformer_depenses(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """
+    Nettoie et restructure le DataFrame brut des dépenses.
+
+    Retourne un dictionnaire de 3 DataFrames :
+        'fournisseurs'  → table fournisseur
+        'categories'    → table categorie_achat
+        'achats'        → table achat
+    """
+    print("\n-- TRANSFORMATION DÉPENSES -------------------------------------")
+    df = df.copy()
+    n_initial = len(df)
+
+    # ── ÉTAPE 1 : Suppression des lignes entièrement vides ───────────────────
+    # Une ligne vide n'a aucune colonne exploitable
+    df = df.dropna(how="all")
+    print(f"  Lignes vides supprimées                    : {n_initial - len(df)}")
+
+    # ── ÉTAPE 2 : Suppression des lignes sans fournisseur ni article ─────────
+    n_avant = len(df)
+    df = df.dropna(subset=["Fournisseur", "Article"])
+    print(f"  Lignes incomplètes supprimées              : {n_avant - len(df)}")
+
+    # ── ÉTAPE 3 : Parsage des dates ──────────────────────────────────────────
+    df["date_achat"] = df["Date"].apply(_parser_date)
+    df = df.dropna(subset=["date_achat"])
+
+    # ── ÉTAPE 4 : Correction des montants négatifs ───────────────────────────
+    df["Prix_Achat_Total"] = pd.to_numeric(df["Prix_Achat_Total"], errors="coerce")
+    masque_negatif = df["Prix_Achat_Total"] < 0
+    df.loc[masque_negatif, "Prix_Achat_Total"] = df.loc[masque_negatif, "Prix_Achat_Total"].abs()
+    print(f"  Montants négatifs corrigés                 : {masque_negatif.sum()}")
+
+    # ── ÉTAPE 5 : Cast des types ─────────────────────────────────────────────
+    df["Quantite"]         = pd.to_numeric(df["Quantite"], errors="coerce").astype("Int64")
+    df["Prix_Achat_Total"] = df["Prix_Achat_Total"].round(2)
+
+    # Nettoyage des chaînes de caractères
+    for col in ["Fournisseur", "Article", "Categorie", "Mode_Paiement"]:
+        df[col] = df[col].astype(str).str.strip()
+
+    print(f"  Lignes propres conservées                  : {len(df)}")
+
+    # ── ÉTAPE 6 : Extraction des 3 DataFrames normalisés ─────────────────────
+
+    df_fournisseurs = (
+        df[["Fournisseur"]]
+        .drop_duplicates()
+        .rename(columns={"Fournisseur": "nom"})
+        .reset_index(drop=True)
+    )
+
+    df_categories = (
+        df[["Categorie"]]
+        .drop_duplicates()
+        .rename(columns={"Categorie": "libelle"})
+        .reset_index(drop=True)
+    )
+
+    df_achats = (
+        df[["date_achat", "Fournisseur", "Article", "Categorie", "Quantite",
+            "Prix_Achat_Total", "Mode_Paiement"]]
+        .rename(columns={
+            "Fournisseur":      "nom_fournisseur",
+            "Article":          "libelle_article",
+            "Categorie":        "libelle_categorie",
+            "Quantite":         "quantite",
+            "Prix_Achat_Total": "prix_achat_total",
+            "Mode_Paiement":    "mode_paiement",
+        })
+        .reset_index(drop=True)
+    )
+
+    print("-- FIN TRANSFORMATION DÉPENSES ---------------------------------\n")
+
+    return {
+        "fournisseurs": df_fournisseurs,
+        "categories":   df_categories,
+        "achats":       df_achats,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSFORMATION CLIENTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def transformer_clients(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Nettoie le DataFrame brut des clients/prospects.
+
+    Retourne un DataFrame unique prêt pour la table client de schema_analytics.
+    Colonnes : nom_client, entreprise, telephone, email, ville
+    """
+    print("\n-- TRANSFORMATION CLIENTS --------------------------------------")
+    df = df.copy()
+    n_initial = len(df)
+
+    # ── ÉTAPE 1 : Nettoyage des chaînes ─────────────────────────────────────
+    for col in ["Nom_Client", "Entreprise", "Telephone", "Email", "Ville"]:
+        df[col] = df[col].astype(str).str.strip()
+        # Remettre NaN les chaînes vides et les "nan" issus du cast
+        df[col] = df[col].replace({"": None, "nan": None, "None": None})
+
+    # ── ÉTAPE 2 : Normalisation de la ville ──────────────────────────────────
+    df["Ville"] = df["Ville"].apply(_normaliser_ville)
+
+    # ── ÉTAPE 3 : Déduplication insensible à la casse ────────────────────────
+    # Les doublons ont le nom en MAJUSCULES — on trie pour garder
+    # la version en casse mixte (plus lisible) en premier
+    df["_nom_lower"] = df["Nom_Client"].str.lower()
+    df = df.sort_values("Nom_Client")          # casse mixte avant MAJUSCULES
+    df = df.drop_duplicates(subset=["_nom_lower"], keep="first")
+    df = df.drop(columns=["_nom_lower"])
+    print(f"  Doublons supprimés                         : {n_initial - len(df)}")
+
+    # ── ÉTAPE 4 : Renommage et sélection des colonnes finales ────────────────
+    df_clients = (
+        df[["Nom_Client", "Entreprise", "Telephone", "Email", "Ville"]]
+        .rename(columns={
+            "Nom_Client": "nom_client",
+            "Entreprise": "entreprise",
+            "Telephone":  "telephone",
+            "Email":      "email",
+            "Ville":      "ville",
+        })
+        .reset_index(drop=True)
+    )
+
+    print(f"  Clients propres conservés                  : {len(df_clients)}")
+    print("-- FIN TRANSFORMATION CLIENTS ----------------------------------\n")
+
+    return df_clients
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POINT D'ENTRÉE PRINCIPAL
+# ─────────────────────────────────────────────────────────────────────────────
+
+def transformer_tout(dfs: dict[str, pd.DataFrame]) -> dict:
+    """
+    Lance les 3 transformations et retourne toutes les données propres.
+
+    Paramètre :
+        dfs — dictionnaire retourné par extract.extraire_tout()
+
+    Retourne un dictionnaire avec les clés :
+        'ventes'   → dict (clients, employes, factures, lignes)
+        'depenses' → dict (fournisseurs, categories, achats)
+        'clients'  → DataFrame
+    """
+    return {
+        "ventes":   transformer_ventes(dfs["ventes"]),
+        "depenses": transformer_depenses(dfs["depenses"]),
+        "clients":  transformer_clients(dfs["clients"]),
+    }
