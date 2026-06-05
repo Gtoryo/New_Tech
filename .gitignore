@@ -1,0 +1,21 @@
+# Environnement virtuel Python
+.env/
+
+# Variables d'environnement (identifiants secrets)
+.env
+variable.env
+
+# Données sources (non versionnées)
+data/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+*info_projet/
