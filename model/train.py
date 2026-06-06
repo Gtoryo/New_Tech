@@ -38,7 +38,7 @@ def _creer_moteur():
         f"postgresql+psycopg2://"
         f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
         f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}"
+        f"/{os.getenv('DB_NAME')}?sslmode=require"
     )
     return create_engine(url)
 
@@ -83,7 +83,7 @@ def _sauvegarder(modele: Prophet, chemin: Path) -> None:
     """Sérialise le modèle entraîné dans un fichier .pkl."""
     with open(chemin, "wb") as f:
         pickle.dump(modele, f)
-    print(f"  Sauvegardé → {chemin.relative_to(chemin.parent.parent)}")
+    print(f"  Sauvegarde -> {chemin.relative_to(chemin.parent.parent)}")
 
 
 def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180) -> None:
@@ -123,7 +123,7 @@ def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180
             schema="schema_ia", if_exists="append", index=False, method="multi",
         )
 
-    print(f"  → {len(df)} prévisions [{service}] sauvegardées en base")
+    print(f"  -> {len(df)} previsions [{service}] sauvegardees en base")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
