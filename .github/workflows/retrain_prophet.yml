@@ -28,10 +28,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Forcer IPv4 (runners GitHub Actions incompatibles IPv6 Supabase)
+      - name: Résolution IPv4 Supabase (DNS renvoie IPv6, non routable sur GitHub Actions)
         run: |
-          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+          IPV4=$(python3 -c "import socket; print(socket.getaddrinfo('$DB_HOST', None, socket.AF_INET)[0][4][0])")
+          echo "DB_HOST=$IPV4" >> $GITHUB_ENV
 
       - name: Installation des dépendances
         run: pip install -r requirements-train.txt
