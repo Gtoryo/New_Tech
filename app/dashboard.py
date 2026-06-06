@@ -57,7 +57,7 @@ def _moteur():
         f"postgresql+psycopg2://"
         f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
         f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}"
+        f"/{os.getenv('DB_NAME')}?sslmode=require"
     )
     return create_engine(url)
 
