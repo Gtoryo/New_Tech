@@ -1,0 +1,46 @@
+name: Réentraînement mensuel Prophet
+
+on:
+  schedule:
+    - cron: '0 2 1 * *'   # 1er de chaque mois à 02h00 UTC
+  workflow_dispatch:        # déclenchement manuel (tests)
+
+permissions:
+  contents: write           # nécessaire pour git push des .pkl
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    env:
+      DB_HOST:     ${{ secrets.DB_HOST }}
+      DB_PORT:     ${{ secrets.DB_PORT }}
+      DB_NAME:     ${{ secrets.DB_NAME }}
+      DB_USER:     ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Installation de Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installation des dépendances
+        run: pip install -r requirements-train.txt
+
+      - name: Installation de CmdStan (moteur de calcul Prophet)
+        run: python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+
+      - name: Réentraînement Prophet + sauvegarde prévisions en base
+        run: python model/train.py
+
+      - name: Commit des modèles .pkl mis à jour
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add models/*.pkl
+          git diff --staged --quiet || git commit -m "feat: réentraînement Prophet mensuel $(date +'%Y-%m')"
+          git push
