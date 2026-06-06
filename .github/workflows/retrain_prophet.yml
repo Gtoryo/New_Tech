@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Forcer IPv4 (runners GitHub Actions incompatibles IPv6 Supabase)
+        run: |
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
       - name: Installation des dépendances
         run: pip install -r requirements-train.txt
 
