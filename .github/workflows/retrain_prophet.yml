@@ -32,7 +32,13 @@ jobs:
         run: pip install -r requirements-train.txt
 
       - name: Installation de CmdStan (moteur de calcul Prophet)
-        run: python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+        run: |
+          python -c "import cmdstanpy; cmdstanpy.install_cmdstan(overwrite=True)"
+          python -c "
+          import pathlib, shutil, prophet
+          for p in (pathlib.Path(prophet.__file__).parent / 'stan_model').glob('cmdstan-*'):
+              shutil.rmtree(p, ignore_errors=True)
+          "
 
       - name: Réentraînement Prophet + sauvegarde prévisions en base
         run: python model/train.py
