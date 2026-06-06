@@ -4,6 +4,8 @@
 # Variables d'environnement (identifiants secrets)
 .env
 variable.env
+.streamlit/secrets.toml
+generer_hash.py
 
 # Données sources (non versionnées)
 data/
@@ -19,3 +21,5 @@ dist/
 build/
 
 *info_projet/
+
+*generated_data
