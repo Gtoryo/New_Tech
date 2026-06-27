@@ -1,10 +1,10 @@
 """
 kpis.py — Endpoint GET /api/v1/kpis/
-Agrège les indicateurs clés depuis schema_ia pour le tableau de bord.
+Agrège les indicateurs clés via SQL direct depuis schema_ia.
 """
 
-import pandas as pd
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import text
 
 from api.database import get_engine
 from api.schemas import KpiOut
@@ -25,34 +25,37 @@ def obtenir_kpis() -> KpiOut:
     engine = get_engine()
     try:
         with engine.connect() as conn:
-            df_global = pd.read_sql(
-                "SELECT y, nb_commandes FROM schema_ia.serie_ventes_journalieres",
-                conn,
-            )
-            df_services = pd.read_sql(
-                "SELECT service, y FROM schema_ia.serie_ventes_par_service",
-                conn,
-            )
+            row_global = conn.execute(text("""
+                SELECT
+                    SUM(y)::bigint          AS ca_total,
+                    SUM(nb_commandes)::bigint AS nb_commandes,
+                    AVG(y)::bigint          AS ca_moyen_jour
+                FROM schema_ia.serie_ventes_journalieres
+            """)).mappings().fetchone()
+
+            row_top = conn.execute(text("""
+                SELECT service
+                FROM schema_ia.serie_ventes_par_service
+                GROUP BY service
+                ORDER BY SUM(y) DESC
+                LIMIT 1
+            """)).fetchone()
+
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Impossible d'accéder à la base de données : {exc}",
         ) from exc
 
-    if df_global.empty:
+    if not row_global or row_global["ca_total"] is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Aucune donnée disponible. Vérifiez que le pipeline ETL a été exécuté.",
         )
 
-    ca_total     = int(df_global["y"].sum())
-    nb_commandes = int(df_global["nb_commandes"].sum())
-    ca_moyen     = int(df_global["y"].mean())
-    top_service  = df_services.groupby("service")["y"].sum().idxmax()
-
     return KpiOut(
-        ca_total=ca_total,
-        nb_commandes=nb_commandes,
-        ca_moyen_jour=ca_moyen,
-        top_service=top_service,
+        ca_total=row_global["ca_total"],
+        nb_commandes=row_global["nb_commandes"],
+        ca_moyen_jour=row_global["ca_moyen_jour"],
+        top_service=row_top[0] if row_top else "N/A",
     )

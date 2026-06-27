@@ -1,12 +1,12 @@
 """
 previsions.py — Endpoint GET /api/v1/previsions/{service}
 Lit les prévisions Prophet pré-calculées depuis schema_ia.previsions_prophet.
-Aucune dépendance à Prophet à l'exécution : simple SELECT SQL.
+Aucune dépendance à Prophet ni à pandas à l'exécution : simple SELECT SQL.
 """
 
+from datetime import date
 from typing import List, Literal
 
-import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import text
 
@@ -34,24 +34,31 @@ def obtenir_previsions(
 ) -> List[PrevisionPoint]:
     engine = get_engine()
     with engine.connect() as conn:
-        df = pd.read_sql(
-            """
-            SELECT ds, yhat, yhat_lower, yhat_upper
-            FROM schema_ia.previsions_prophet
-            WHERE service = %(service)s
-            ORDER BY ds
-            LIMIT %(horizon)s
-            """,
-            conn,
-            params={"service": service, "horizon": horizon},
+        result = conn.execute(
+            text("""
+                SELECT ds, yhat, yhat_lower, yhat_upper
+                FROM schema_ia.previsions_prophet
+                WHERE service = :service
+                ORDER BY ds
+                LIMIT :horizon
+            """),
+            {"service": service, "horizon": horizon},
         )
+        rows = result.mappings().all()
 
-    if df.empty:
+    if not rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Aucune prévision disponible pour le service '{service}'. "
                    "Vérifiez que le réentraînement mensuel a été exécuté.",
         )
 
-    df["ds"] = pd.to_datetime(df["ds"]).dt.date
-    return df.to_dict(orient="records")
+    return [
+        {
+            "ds": row["ds"] if isinstance(row["ds"], date) else row["ds"].date(),
+            "yhat": float(row["yhat"]),
+            "yhat_lower": float(row["yhat_lower"]),
+            "yhat_upper": float(row["yhat_upper"]),
+        }
+        for row in rows
+    ]
