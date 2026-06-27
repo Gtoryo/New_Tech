@@ -277,6 +277,13 @@ def afficher_dashboard() -> None:
     st.divider()
 
     # ── Section 4 — Prévision Prophet ─────────────────────────────────────────
+    if df_prev.empty:
+        st.warning(
+            "Prévisions indisponibles — l'API est en cours de démarrage (cold start Render). "
+            "Rechargez la page dans 30 secondes."
+        )
+        return
+
     couleur = COULEURS.get(service_choisi, "#3498DB")
     st.subheader(f"🔮 Prévision Prophet — {service_choisi.capitalize()} — {horizon} jours")
 
