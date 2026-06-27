@@ -62,7 +62,10 @@ def predire(service: str, horizon_jours: int = 90) -> pd.DataFrame:
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.json().get("detail", str(exc))
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = exc.response.text[:200] or str(exc)
         st.error(f"Erreur API ({exc.response.status_code}) : {detail}")
         return pd.DataFrame(columns=["ds", "yhat", "yhat_lower", "yhat_upper"])
     except httpx.RequestError as exc:
