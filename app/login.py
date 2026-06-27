@@ -37,13 +37,22 @@ def afficher_login() -> None:
     with col:
         st.image("https://img.icons8.com/color/96/lock.png", width=72)
         st.markdown("### Connexion — PME Multiservice")
-        st.caption("Accès réservé au personnel autorisé")
+        st.caption("Accès réservé au personnel autorisé. Les deux champs sont obligatoires.")
         st.divider()
 
         with st.form("form_login", clear_on_submit=False):
-            identifiant  = st.text_input("Identifiant", placeholder="ex : directeur")
+            identifiant = st.text_input(
+                "Identifiant",
+                placeholder="ex : directeur",
+                help="Votre identifiant de connexion fourni par l'administrateur.",
+                autocomplete="username",
+            )
             mot_de_passe = st.text_input(
-                "Mot de passe", type="password", placeholder="••••••••"
+                "Mot de passe",
+                type="password",
+                placeholder="••••••••",
+                help="Votre mot de passe personnel. La saisie est masquée.",
+                autocomplete="current-password",
             )
             soumettre = st.form_submit_button("Se connecter", use_container_width=True)
 

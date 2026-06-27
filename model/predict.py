@@ -1,8 +1,10 @@
 """
-predict.py — Lecture des prévisions Prophet depuis Supabase.
-Les prévisions sont pré-calculées par model/train.py et stockées dans
-schema_ia.previsions_prophet. Cette approche découple l'exécution de
-Prophet (local / CI) de l'application Streamlit (cloud).
+predict.py — Accès aux prévisions Prophet via l'API REST.
+
+Le tableau de bord Streamlit appelle cette fonction ; elle interroge
+l'API (GET /api/v1/previsions/{service}) plutôt que la base de données
+directement. Ce découplage permet à tout client futur (mobile, ERP)
+d'utiliser le même endpoint sans accès direct à Supabase.
 
   predire(service, horizon_jours) → DataFrame (ds, yhat, yhat_lower, yhat_upper)
 """
@@ -14,10 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import os
+
+import httpx
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
 
 load_dotenv(ROOT / "variable.env")
 
@@ -29,21 +32,14 @@ SERVICES_DISPONIBLES = [
     "Vidéosurveillance",
 ]
 
-
-@st.cache_resource
-def _moteur():
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}?sslmode=require"
-    )
-    return create_engine(url)
+_API_URL = os.getenv("API_URL", "http://localhost:8000")
+_API_KEY = os.getenv("API_SECRET_KEY", "")
 
 
+@st.cache_data(ttl=3600)
 def predire(service: str, horizon_jours: int = 90) -> pd.DataFrame:
     """
-    Lit les prévisions pré-calculées depuis schema_ia.previsions_prophet.
+    Interroge l'API REST pour obtenir les prévisions Prophet pré-calculées.
 
     Paramètres :
         service       — "global", "Imprimerie", "Sérigraphie", etc.
@@ -54,19 +50,28 @@ def predire(service: str, horizon_jours: int = 90) -> pd.DataFrame:
         yhat        — prévision centrale (FCFA)
         yhat_lower  — borne basse de l'intervalle de confiance
         yhat_upper  — borne haute
-    """
-    with _moteur().connect() as conn:
-        df = pd.read_sql(
-            """
-            SELECT ds, yhat, yhat_lower, yhat_upper
-            FROM schema_ia.previsions_prophet
-            WHERE service = %(service)s
-            ORDER BY ds
-            LIMIT %(horizon)s
-            """,
-            conn,
-            params={"service": service, "horizon": horizon_jours},
-        )
 
+    Lève une exception Streamlit si l'API est injoignable ou renvoie une erreur.
+    """
+    try:
+        response = httpx.get(
+            f"{_API_URL}/api/v1/previsions/{service}",
+            params={"horizon": horizon_jours},
+            headers={"X-API-Key": _API_KEY},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.json().get("detail", str(exc))
+        st.error(f"Erreur API ({exc.response.status_code}) : {detail}")
+        return pd.DataFrame(columns=["ds", "yhat", "yhat_lower", "yhat_upper"])
+    except httpx.RequestError as exc:
+        st.error(
+            f"API injoignable ({_API_URL}). "
+            "Vérifiez que le serveur est démarré (`uvicorn api.main:app --reload`)."
+        )
+        return pd.DataFrame(columns=["ds", "yhat", "yhat_lower", "yhat_upper"])
+
+    df = pd.DataFrame(response.json())
     df["ds"] = pd.to_datetime(df["ds"])
     return df

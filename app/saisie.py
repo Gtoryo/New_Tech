@@ -159,41 +159,81 @@ def afficher_saisie() -> None:
     st.caption("Pôle Imprimerie & Sérigraphie — Nouvelle entrée")
     st.divider()
 
+    # WCAG 1.3.1 — identification explicite des champs obligatoires
+    st.caption("Les champs marqués d'un astérisque (*) sont obligatoires.")
+
     with st.form("form_saisie", clear_on_submit=True):
 
         # ── Bloc Client ───────────────────────────────────────────────────────
         st.subheader("👤 Client")
         col1, col2 = st.columns(2)
         with col1:
-            client    = st.text_input("Nom du client *", placeholder="ex : Entreprise ABC")
+            client = st.text_input(
+                "Nom du client *",
+                placeholder="ex : Entreprise ABC",
+                help="Nom complet du client ou de l'entreprise. La recherche est insensible à la casse.",
+            )
         with col2:
-            telephone = st.text_input("Téléphone", placeholder="ex : +242 06 000 00 00")
+            telephone = st.text_input(
+                "Téléphone",
+                placeholder="ex : +242 06 000 00 00",
+                help="Numéro de téléphone du client (optionnel).",
+            )
 
         # ── Bloc Commande ─────────────────────────────────────────────────────
         st.subheader("📦 Commande")
         col3, col4 = st.columns(2)
         with col3:
-            date_cmd = st.date_input("Date *", value=date.today())
-            service  = st.selectbox("Service *", options=SERVICES)
+            date_cmd = st.date_input(
+                "Date *",
+                value=date.today(),
+                help="Date de la commande. Par défaut : date du jour.",
+            )
+            service = st.selectbox(
+                "Service *",
+                options=SERVICES,
+                help="Pôle d'activité concerné par cette commande.",
+            )
         with col4:
-            employe = st.text_input("Employé en charge *", placeholder="ex : Jean Moukassa")
-            statut  = st.selectbox("Statut paiement *", options=STATUTS)
+            employe = st.text_input(
+                "Employé en charge *",
+                placeholder="ex : Jean Moukassa",
+                help="Nom de l'employé responsable de cette commande.",
+            )
+            statut = st.selectbox(
+                "Statut paiement *",
+                options=STATUTS,
+                help="Indiquez si la commande a été réglée, reste à payer, ou a été partiellement payée.",
+            )
 
         description = st.text_area(
             "Description *",
             placeholder="ex : Impression flyers A5 recto-verso, 1 000 exemplaires",
+            help="Décrivez précisément la nature de la commande (produit, format, quantité, finition…).",
         )
 
         # ── Bloc Montants ─────────────────────────────────────────────────────
         st.subheader("💰 Montants")
         col5, col6, col7 = st.columns(3)
         with col5:
-            quantite      = st.number_input("Quantité *", min_value=1, value=1, step=1)
+            quantite = st.number_input(
+                "Quantité *",
+                min_value=1, value=1, step=1,
+                help="Nombre d'unités commandées.",
+            )
         with col6:
-            prix_unitaire = st.number_input("Prix Unitaire (FCFA) *", min_value=0, value=0, step=500)
+            prix_unitaire = st.number_input(
+                "Prix Unitaire (FCFA) *",
+                min_value=0, value=0, step=500,
+                help="Prix unitaire hors taxe en Francs CFA. Le total est calculé automatiquement.",
+            )
         with col7:
             # Affiché en lecture seule — jamais saisi manuellement
-            st.metric("Total calculé", f"{quantite * prix_unitaire:,} FCFA".replace(",", " "))
+            st.metric(
+                "Total calculé",
+                f"{quantite * prix_unitaire:,} FCFA".replace(",", " "),
+                help="Calculé automatiquement : Quantité × Prix Unitaire.",
+            )
 
         soumettre = st.form_submit_button("✅ Enregistrer la commande", use_container_width=True)
 

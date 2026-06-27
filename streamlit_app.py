@@ -12,11 +12,30 @@ from app.saisie import afficher_saisie
 
 # ── Configuration globale (doit être le 1er appel Streamlit) ──────────────────
 st.set_page_config(
-    page_title="PME Multiservice",
+    page_title="Tableau de bord IA — Pôle Imprimerie & Sérigraphie",
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Accessibilité — attribut lang et indicateurs de focus (WCAG 2.4.7 / RGAA) ─
+st.markdown("""
+<script>document.documentElement.lang = 'fr';</script>
+<style>
+/* WCAG 2.4.7 — Focus visible sur tous les éléments interactifs */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+    outline: 3px solid #0066CC !important;
+    outline-offset: 2px !important;
+}
+/* Amélioration du contraste des captions (WCAG 1.4.3) */
+.stCaption { color: #444444 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ── Initialisation de la session (valeurs par défaut au 1er chargement) ───────
 st.session_state.setdefault("connecte",    False)

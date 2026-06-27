@@ -23,7 +23,8 @@ from model.predict import predire
 load_dotenv(ROOT / "variable.env")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PALETTE COULEURS PAR SERVICE
+# PALETTE COULEURS ET MOTIFS PAR SERVICE
+# WCAG 1.4.1 — la couleur n'est pas le seul moyen de distinction
 # ─────────────────────────────────────────────────────────────────────────────
 
 COULEURS = {
@@ -32,6 +33,15 @@ COULEURS = {
     "Maintenance":       "#27AE60",
     "Vidéosurveillance": "#8E44AD",
     "global":            "#F39C12",
+}
+
+# Motifs de hachure Plotly (complément visuel à la couleur)
+PATTERNS = {
+    "Imprimerie":        "",
+    "Sérigraphie":       "/",
+    "Maintenance":       "\\",
+    "Vidéosurveillance": "x",
+    "global":            "",
 }
 
 
@@ -108,6 +118,7 @@ def afficher_dashboard() -> None:
         service_choisi = st.selectbox(
             "Pôle d'activité (prévision)",
             options=["global", "Imprimerie", "Sérigraphie", "Maintenance", "Vidéosurveillance"],
+            help="Sélectionnez le pôle d'activité pour lequel afficher les prévisions Prophet.",
         )
 
         horizon = st.select_slider(
@@ -115,6 +126,7 @@ def afficher_dashboard() -> None:
             options=[30, 60, 90, 120, 180],
             value=90,
             format_func=lambda x: f"{x} jours",
+            help="Nombre de jours futurs à afficher sur la courbe de prévision (maximum 180 jours).",
         )
 
         st.divider()
@@ -175,14 +187,33 @@ def afficher_dashboard() -> None:
         df_mensuel,
         x="mois", y="ca_total", color="service",
         color_discrete_map=COULEURS,
-        labels={"mois": "", "ca_total": "CA (FCFA)", "service": "Pôle"},
+        # WCAG 1.4.1 — motifs de hachure en complément de la couleur
+        pattern_shape="service",
+        pattern_shape_map=PATTERNS,
+        labels={"mois": "Mois", "ca_total": "CA (FCFA)", "service": "Pôle d'activité"},
         barmode="stack", template="plotly_white",
     )
+    fig_bar.update_traces(
+        hovertemplate="<b>%{data.name}</b><br>Mois : %{x|%B %Y}<br>CA : %{y:,.0f} FCFA<extra></extra>",
+    )
     fig_bar.update_layout(
+        title_text="Chiffre d'affaires mensuel empilé par pôle d'activité",
+        title_font_size=1,  # masqué visuellement, présent pour les lecteurs d'écran
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=10, b=10), height=380,
     )
     st.plotly_chart(fig_bar, use_container_width=True)
+
+    # WCAG 1.1.1 — alternative textuelle au graphique
+    with st.expander("📋 Données — Évolution mensuelle du CA (tableau)"):
+        st.caption("Tableau de données correspondant au graphique ci-dessus.")
+        df_display = df_mensuel.copy()
+        df_display["mois"] = df_display["mois"].dt.strftime("%B %Y")
+        df_display["ca_total"] = df_display["ca_total"].apply(lambda x: f"{int(x):,} FCFA".replace(",", " "))
+        st.dataframe(
+            df_display.rename(columns={"mois": "Mois", "service": "Pôle", "ca_total": "CA"}),
+            use_container_width=True, hide_index=True,
+        )
 
     # ── Section 3 — Donut + Barres horizontales ───────────────────────────────
     col_donut, col_top = st.columns(2)
@@ -195,9 +226,28 @@ def afficher_dashboard() -> None:
             color="service", color_discrete_map=COULEURS,
             hole=0.45, template="plotly_white",
         )
-        fig_donut.update_traces(textinfo="percent+label", textfont_size=13)
-        fig_donut.update_layout(showlegend=False, margin=dict(t=10, b=10), height=320)
+        # WCAG 1.4.1 — libellé + pourcentage sur chaque secteur (pas seulement couleur)
+        fig_donut.update_traces(
+            textinfo="percent+label",
+            textfont_size=13,
+            hovertemplate="<b>%{label}</b><br>CA : %{value:,.0f} FCFA<br>Part : %{percent}<extra></extra>",
+        )
+        fig_donut.update_layout(
+            title_text="Répartition du chiffre d'affaires total par pôle d'activité",
+            title_font_size=1,
+            showlegend=True,
+            margin=dict(t=10, b=10), height=320,
+        )
         st.plotly_chart(fig_donut, use_container_width=True)
+        # WCAG 1.1.1 — alternative textuelle
+        with st.expander("📋 Données — Répartition du CA (tableau)"):
+            df_donut_display = ca_par_service.copy()
+            df_donut_display["part"] = (df_donut_display["y"] / df_donut_display["y"].sum() * 100).round(1)
+            df_donut_display["y"] = df_donut_display["y"].apply(lambda x: f"{int(x):,} FCFA".replace(",", " "))
+            st.dataframe(
+                df_donut_display.rename(columns={"service": "Pôle", "y": "CA Total", "part": "Part (%)"}),
+                use_container_width=True, hide_index=True,
+            )
 
     with col_top:
         st.subheader("🏅 CA total par pôle d'activité")
@@ -208,10 +258,20 @@ def afficher_dashboard() -> None:
         fig_hbar = px.bar(
             df_top, x="y", y="service", color="service",
             color_discrete_map=COULEURS, orientation="h",
+            # WCAG 1.4.1 — motifs en complément de la couleur
+            pattern_shape="service",
+            pattern_shape_map=PATTERNS,
             labels={"y": "CA Total (FCFA)", "service": ""},
             template="plotly_white", text_auto=".3s",
         )
-        fig_hbar.update_layout(showlegend=False, margin=dict(t=10, b=10), height=320)
+        fig_hbar.update_traces(
+            hovertemplate="<b>%{y}</b><br>CA total : %{x:,.0f} FCFA<extra></extra>",
+        )
+        fig_hbar.update_layout(
+            title_text="Classement des pôles d'activité par chiffre d'affaires total",
+            title_font_size=1,
+            showlegend=False, margin=dict(t=10, b=10), height=320,
+        )
         st.plotly_chart(fig_hbar, use_container_width=True)
 
     st.divider()
@@ -234,23 +294,27 @@ def afficher_dashboard() -> None:
     fig_prev.add_trace(go.Bar(
         x=df_hist_mois["mois"], y=df_hist_mois["y"],
         name="Historique (mensuel)", marker_color=couleur, opacity=0.55,
+        hovertemplate="Historique<br>Mois : %{x|%B %Y}<br>CA : %{y:,.0f} FCFA<extra></extra>",
     ))
     fig_prev.add_trace(go.Scatter(
         x=list(df_prev["ds"]) + list(df_prev["ds"])[::-1],
         y=list(df_prev["yhat_upper"]) + list(df_prev["yhat_lower"])[::-1],
         fill="toself", fillcolor=_hex_rgba(couleur, 0.18),
         line=dict(color="rgba(0,0,0,0)"),
-        name="Intervalle de confiance", hoverinfo="skip",
+        name="Intervalle de confiance (80 %)", hoverinfo="skip",
     ))
     fig_prev.add_trace(go.Scatter(
         x=df_prev["ds"], y=df_prev["yhat"],
-        name="Prévision (yhat)",
+        name="Prévision centrale (yhat)",
         line=dict(color=couleur, width=2.5, dash="dash"), mode="lines",
+        hovertemplate="Date : %{x|%d/%m/%Y}<br>Prévision : %{y:,.0f} FCFA<extra></extra>",
     ))
     fig_prev.update_layout(
+        title_text=f"Prévision Prophet — {service_choisi} — horizon {horizon} jours",
+        title_font_size=1,
         template="plotly_white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="", yaxis_title="CA (FCFA)",
+        xaxis_title="Date", yaxis_title="CA (FCFA)",
         margin=dict(t=10, b=10), height=420,
     )
     st.plotly_chart(fig_prev, use_container_width=True)
@@ -259,3 +323,19 @@ def afficher_dashboard() -> None:
         f"Prévision centrale : **{_fmt(int(df_prev['yhat'].mean()))} FCFA/jour** en moyenne  •  "
         f"Seuil stock recommandé : **{_fmt(int(df_prev['yhat_upper'].max()))} FCFA/jour** (borne haute)"
     )
+
+    # WCAG 1.1.1 — alternative textuelle au graphique de prévision
+    with st.expander("📋 Données — Prévisions Prophet (tableau)"):
+        st.caption(
+            "Tableau des prévisions journalières avec intervalle de confiance à 80 %. "
+            "Toutes les valeurs sont en FCFA."
+        )
+        df_prev_display = df_prev[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
+        df_prev_display["ds"] = df_prev_display["ds"].dt.strftime("%d/%m/%Y")
+        df_prev_display = df_prev_display.rename(columns={
+            "ds": "Date",
+            "yhat": "Prévision (FCFA)",
+            "yhat_lower": "Borne basse (FCFA)",
+            "yhat_upper": "Borne haute (FCFA)",
+        })
+        st.dataframe(df_prev_display, use_container_width=True, hide_index=True)
