@@ -25,7 +25,7 @@ app = FastAPI(
 # ── CORS — autorise Streamlit Cloud et localhost en développement ─────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # restreindre à l'URL Streamlit Cloud en production
+    allow_origins=["https://newtech-services-interne.streamlit.app"],
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],
 )
