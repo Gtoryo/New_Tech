@@ -1,7 +1,8 @@
 """
 saisie.py — Page de saisie des commandes (Gestionnaire)
-Formulaire Streamlit : insertion d'une nouvelle commande dans schema_analytics
-en respectant le modèle relationnel (client → employe → service → facture → ligne_facture).
+Formulaire Streamlit : envoi d'une nouvelle commande via l'API REST
+(POST /api/v1/commandes/). La logique métier (upsert client/employé,
+transaction atomique) est déléguée à l'API.
 """
 
 import sys
@@ -11,134 +12,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import os
-import uuid
 from datetime import date
 
+import httpx
 import streamlit as st
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
 
 load_dotenv(ROOT / "variable.env")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONNEXION
-# ─────────────────────────────────────────────────────────────────────────────
-
-@st.cache_resource
-def _moteur():
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}?sslmode=require"
-    )
-    return create_engine(url)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS SQL (requêtes paramétrées — protection contre l'injection SQL)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _generer_facture_id(annee: int) -> str:
-    """Génère un identifiant unique : FAC-YYYY-XXXXXX (6 chars hex aléatoires)."""
-    return f"FAC-{annee}-{uuid.uuid4().hex[:6].upper()}"
-
-
-def _obtenir_ou_creer_client(conn, nom_client: str, telephone: str) -> int:
-    """
-    Cherche le client par nom (insensible à la casse).
-    S'il n'existe pas, l'insère et retourne son id généré.
-    """
-    row = conn.execute(
-        text("SELECT id_client FROM schema_analytics.client WHERE LOWER(nom_client) = LOWER(:nom)"),
-        {"nom": nom_client},
-    ).fetchone()
-
-    if row:
-        return row[0]
-
-    row = conn.execute(
-        text("""
-            INSERT INTO schema_analytics.client (nom_client, telephone)
-            VALUES (:nom, :tel)
-            RETURNING id_client
-        """),
-        {"nom": nom_client, "tel": telephone or None},
-    ).fetchone()
-    return row[0]
-
-
-def _obtenir_ou_creer_employe(conn, nom_employe: str) -> int:
-    """
-    Cherche l'employé par nom (insensible à la casse).
-    S'il n'existe pas, l'insère et retourne son id généré.
-    """
-    row = conn.execute(
-        text("SELECT id_employe FROM schema_analytics.employe WHERE LOWER(nom_employe) = LOWER(:nom)"),
-        {"nom": nom_employe},
-    ).fetchone()
-
-    if row:
-        return row[0]
-
-    row = conn.execute(
-        text("""
-            INSERT INTO schema_analytics.employe (nom_employe)
-            VALUES (:nom)
-            RETURNING id_employe
-        """),
-        {"nom": nom_employe},
-    ).fetchone()
-    return row[0]
-
-
-def _obtenir_service(conn, libelle: str) -> int:
-    """Retourne l'id_service correspondant au libellé sélectionné."""
-    row = conn.execute(
-        text("SELECT id_service FROM schema_analytics.service WHERE libelle = :lib"),
-        {"lib": libelle},
-    ).fetchone()
-    if not row:
-        raise ValueError(f"Service introuvable en base : {libelle}")
-    return row[0]
-
-
-def _inserer_commande(conn, *, facture_id, date_facture, statut_paiement,
-                      id_client, id_employe, id_service,
-                      description, quantite, prix_unitaire, total) -> None:
-    """Insère la facture puis sa ligne — dans la même transaction ouverte."""
-    conn.execute(
-        text("""
-            INSERT INTO schema_analytics.facture
-                (id_facture, date_facture, statut_paiement, id_client, id_employe)
-            VALUES
-                (:fac_id, :date, :statut, :id_client, :id_employe)
-        """),
-        {
-            "fac_id":    facture_id,
-            "date":      date_facture,
-            "statut":    statut_paiement,
-            "id_client":  id_client,
-            "id_employe": id_employe,
-        },
-    )
-    conn.execute(
-        text("""
-            INSERT INTO schema_analytics.ligne_facture
-                (description, quantite, prix_unitaire, total_ligne, id_facture, id_service)
-            VALUES
-                (:desc, :qte, :pu, :total, :fac_id, :id_service)
-        """),
-        {
-            "desc":       description,
-            "qte":        quantite,
-            "pu":         prix_unitaire,
-            "total":      total,
-            "fac_id":     facture_id,
-            "id_service": id_service,
-        },
-    )
-
+_API_URL = os.getenv("API_URL", "http://localhost:8000")
+_API_KEY = os.getenv("API_SECRET_KEY", "")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES DU FORMULAIRE
@@ -228,7 +111,6 @@ def afficher_saisie() -> None:
                 help="Prix unitaire hors taxe en Francs CFA. Le total est calculé automatiquement.",
             )
         with col7:
-            # Affiché en lecture seule — jamais saisi manuellement
             st.metric(
                 "Total calculé",
                 f"{quantite * prix_unitaire:,} FCFA".replace(",", " "),
@@ -252,31 +134,41 @@ def afficher_saisie() -> None:
         st.error(f"Champs obligatoires manquants ou invalides : **{', '.join(erreurs)}**")
         return
 
-    # Calcul du total et génération de la référence
-    total      = int(quantite) * float(prix_unitaire)
-    facture_id = _generer_facture_id(date_cmd.year)
+    # Envoi à l'API
+    payload = {
+        "client":           client.strip(),
+        "telephone":        telephone.strip(),
+        "date_facture":     date_cmd.isoformat(),
+        "service":          service,
+        "employe":          employe.strip(),
+        "statut_paiement":  statut,
+        "description":      description.strip(),
+        "quantite":         int(quantite),
+        "prix_unitaire":    float(prix_unitaire),
+    }
 
     try:
-        with _moteur().begin() as conn:  # rollback automatique si exception
-            id_client  = _obtenir_ou_creer_client(conn, client.strip(), telephone.strip())
-            id_employe = _obtenir_ou_creer_employe(conn, employe.strip())
-            id_service = _obtenir_service(conn, service)
-            _inserer_commande(
-                conn,
-                facture_id=facture_id,
-                date_facture=date_cmd,
-                statut_paiement=statut,
-                id_client=id_client,
-                id_employe=id_employe,
-                id_service=id_service,
-                description=description.strip(),
-                quantite=int(quantite),
-                prix_unitaire=float(prix_unitaire),
-                total=total,
-            )
+        response = httpx.post(
+            f"{_API_URL}/api/v1/commandes/",
+            json=payload,
+            headers={"X-API-Key": _API_KEY},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = exc.response.text[:200] or str(exc)
+        st.error(f"Erreur API ({exc.response.status_code}) : {detail}")
+        return
+    except httpx.RequestError:
+        st.error(
+            f"API injoignable ({_API_URL}). "
+            "Vérifiez que le serveur est démarré (`uvicorn api.main:app --reload`)."
+        )
+        return
 
-        st.success(f"Commande enregistrée — Référence : **{facture_id}**")
-        st.balloons()
-
-    except Exception as e:
-        st.error(f"Erreur lors de l'enregistrement : {e}")
+    data = response.json()
+    st.success(f"Commande enregistrée — Référence : **{data['facture_id']}**")
+    st.balloons()
