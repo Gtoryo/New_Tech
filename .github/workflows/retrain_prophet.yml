@@ -40,7 +40,7 @@ jobs:
               shutil.rmtree(p, ignore_errors=True)
           "
 
-      - name: Tests automatisés (C12 — validation modèle et pipeline ETL)
+      - name: Tests automatisés (A1.3 C3 — validation modèle et pipeline ETL)
         run: pytest tests/ -v
 
       - name: Réentraînement Prophet + sauvegarde prévisions en base
