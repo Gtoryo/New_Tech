@@ -15,11 +15,12 @@
 6. [Installation et configuration locale](#6-installation-et-configuration-locale)
 7. [Utilisation du pipeline ETL](#7-utilisation-du-pipeline-etl)
 8. [Module IA — Prophet](#8-module-ia--prophet)
-9. [Application Streamlit](#9-application-streamlit)
-10. [Intégration continue — GitHub Actions](#10-intégration-continue--github-actions)
-11. [Sécurité](#11-sécurité)
-12. [Tests automatisés](#12-tests-automatisés)
-13. [Perspectives d'évolution](#13-perspectives-dévolution)
+9. [API REST — FastAPI](#9-api-rest--fastapi)
+10. [Application Streamlit](#10-application-streamlit)
+11. [Intégration continue — GitHub Actions](#11-intégration-continue--github-actions)
+12. [Sécurité](#12-sécurité)
+13. [Tests automatisés](#13-tests-automatisés)
+14. [Perspectives d'évolution](#14-perspectives-dévolution)
 
 ---
 
@@ -46,24 +47,37 @@ L'entreprise d'accueil est une PME multiservice implantée en Afrique proposant 
 Le pipeline suit une architecture en couches étanches, inspirée du patron *Medallion Architecture* :
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Sources Excel  │────▶│  Pipeline ETL    │────▶│  Supabase (PG)   │────▶│  App Streamlit   │
-│                 │     │  (Python)        │     │                  │     │  (Cloud)         │
-│ ventes.xlsx     │     │  extract.py      │     │  schema_brut     │     │  Saisie web      │
-│ depenses.xlsx   │     │  transform.py    │     │  schema_analytics│     │  Tableau de bord │
-│ clients.xlsx    │     │  load.py         │     │  schema_ia       │     │  Prévisions IA   │
-└─────────────────┘     │  aggregate.py    │     └──────────────────┘     └──────────────────┘
-                        └──────────────────┘
-                                 │
-                        ┌────────▼────────┐
-                        │  model/train.py │
-                        │  Prophet + pkl  │
-                        │  → prévisions   │
-                        │    en BDD       │
-                        └─────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Sources Excel  │────▶│  Pipeline ETL    │────▶│  Supabase (PG)   │
+│                 │     │  (Python)        │     │                  │
+│ ventes.xlsx     │     │  extract.py      │     │  schema_brut     │
+│ depenses.xlsx   │     │  transform.py    │     │  schema_analytics│
+│ clients.xlsx    │     │  load.py         │     │  schema_ia       │
+└─────────────────┘     │  aggregate.py    │     └───────┬──────────┘
+                        └──────────────────┘             │ SQL
+                                 │                       ▼
+                        ┌────────▼────────┐     ┌──────────────────┐
+                        │  GitHub Actions │     │  API REST FastAPI│
+                        │  (mensuel)      │     │  (Render)        │
+                        │  model/train.py │     │  GET /previsions │
+                        │  → prévisions   │     │  POST /commandes │
+                        │    en BDD       │     └────────┬─────────┘
+                        └─────────────────┘              │ HTTPS (httpx)
+                                                         ▼
+                                                ┌──────────────────┐
+                                                │  App Streamlit   │
+                                                │ (Streamlit Cloud)│
+                                                │  Saisie web      │
+                                                │  Tableau de bord │
+                                                │  Prévisions IA   │
+                                                └──────────────────┘
 ```
 
-**Point architectural clé :** `model/train.py` effectue deux opérations à chaque exécution : (1) il sauvegarde le modèle entraîné au format `.pkl` dans `models/`, et (2) il pousse les prévisions sur 180 jours dans `schema_ia.previsions_prophet`. Le dashboard Streamlit lit exclusivement les prévisions depuis la base de données — jamais directement depuis les fichiers `.pkl`.
+**Points architecturaux clés :**
+
+- `model/train.py` effectue deux opérations à chaque exécution : (1) il sauvegarde le modèle entraîné au format `.pkl` dans `models/`, et (2) il pousse les prévisions sur 180 jours dans `schema_ia.previsions_prophet`. Le dashboard Streamlit lit exclusivement les prévisions depuis la base de données — jamais directement depuis les fichiers `.pkl`.
+- **L'API REST FastAPI (déployée sur Render) constitue la couche de service entre l'interface et la base de données** : `model/predict.py` récupère les prévisions via `GET /api/v1/previsions/{service}` et `app/saisie.py` soumet les nouvelles commandes via `POST /api/v1/commandes/` (authentifié par clé API). Ces deux modules ne contiennent aucune dépendance à SQLAlchemy ni à Supabase.
+- Exception documentée : `app/dashboard.py` lit encore les séries historiques directement dans `schema_ia` via SQLAlchemy (lecture seule, cache 1 h). Le raccordement à un futur endpoint `GET /api/v1/historique/` est identifié comme prochaine évolution.
 
 ---
 
@@ -77,6 +91,10 @@ Le pipeline suit une architecture en couches étanches, inspirée du patron *Med
 | Manipulation données | Pandas | 2.2.3 | ETL et feature engineering |
 | Modèle IA | Prophet (Meta) | 1.1.6 | Prévision de séries temporelles |
 | Backend Prophet | CmdStanPy | 1.3.0 | Moteur de calcul Stan |
+| API REST | FastAPI | ≥ 0.115 | Couche de service (prévisions + commandes) |
+| Serveur ASGI | Uvicorn | ≥ 0.30 | Exécution de l'API |
+| Hébergement API | Render | — | Déploiement PaaS de l'API (plan gratuit) |
+| Client HTTP | httpx | ≥ 0.27 | Appels Streamlit → API |
 | Interface web | Streamlit | ≥ 1.35 | Application fullstack Python |
 | Visualisation | Plotly | ≥ 5.22 | Graphiques interactifs |
 | Authentification | bcrypt | 4.2.1 | Hachage des mots de passe |
@@ -93,9 +111,11 @@ New_Tech/
 │
 ├── main.py                     # Point d'entrée du pipeline ETL complet
 ├── streamlit_app.py            # Point d'entrée Streamlit Cloud
-├── runtime.txt                 # Python 3.11 (imposé à Streamlit Cloud)
-├── requirements.txt            # Dépendances runtime (Streamlit, Plotly…)
+├── conftest.py                 # Configuration sys.path pour pytest
+├── runtime.txt                 # Python 3.11 (Streamlit Cloud + Render)
+├── requirements.txt            # Dépendances runtime (Streamlit, Plotly, httpx…)
 ├── requirements-train.txt      # Dépendances CI (+ Prophet, pytest)
+├── requirements-api.txt        # Dépendances API Render (FastAPI, sans pandas)
 ├── variable.env                # Variables d'environnement locales (non commité)
 │
 ├── src/                        # Pipeline ETL — couches séparées
@@ -105,17 +125,31 @@ New_Tech/
 │   └── aggregate.py            # Agrégation schema_analytics → schema_ia
 │
 ├── model/
-│   └── train.py                # Entraînement Prophet + push prévisions en BDD
+│   ├── train.py                # Entraînement Prophet + push prévisions en BDD
+│   ├── predict.py              # Client API — GET prévisions (httpx + cache Streamlit)
+│   └── evaluate.py             # Cross-validation MAE/MAPE/Coverage (évaluation)
 │
 ├── models/                     # Modèles sérialisés (.pkl) — générés à l'exécution
 │   ├── prophet_global.pkl
 │   ├── prophet_imprimerie.pkl
-│   └── prophet_serigraphie.pkl
+│   ├── prophet_serigraphie.pkl
+│   ├── prophet_maintenance.pkl
+│   └── prophet_videosurveillance.pkl
+│
+├── api/                        # API REST FastAPI (déployée sur Render)
+│   ├── main.py                 # Point d'entrée — CORS, routes, /health
+│   ├── auth.py                 # Authentification X-API-Key (temps constant)
+│   ├── database.py             # Moteur SQLAlchemy partagé
+│   ├── schemas.py              # Contrats Pydantic (CommandeIn, PrevisionPoint…)
+│   └── routes/
+│       ├── commandes.py        # POST /api/v1/commandes/ (transaction atomique)
+│       ├── previsions.py       # GET /api/v1/previsions/{service}
+│       └── kpis.py             # GET /api/v1/kpis/
 │
 ├── app/                        # Modules de l'application Streamlit
 │   ├── dashboard.py            # Onglet tableau de bord (KPIs Plotly)
 │   ├── login.py                # Page d'authentification (bcrypt)
-│   └── saisie.py               # Onglet saisie des commandes
+│   └── saisie.py               # Onglet saisie — client API (httpx POST)
 │
 ├── data/                       # Sources Excel (non commitées)
 │   ├── ventes_historiques.xlsx
@@ -124,14 +158,11 @@ New_Tech/
 │
 ├── tests/                      # Suite de tests automatisés
 │   ├── test_transform.py       # 25 tests unitaires ETL
-│   ├── test_model.py           # 11 tests unitaires Prophet
-│   └── conftest.py             # Configuration sys.path pour pytest
+│   └── test_model.py           # 11 tests unitaires Prophet
 │
 ├── info_projet/                # Documentation de cadrage
 │   ├── MPR.md                  # Rapport de cadrage métier (contexte + vision)
-│   ├── Architecture.md         # Document d'architecture technique
-│   ├── conseil.md              # Notes de tutorat et arbitrages techniques
-│   └── role.md                 # Directives de conduite du projet
+│   └── Architecture.md         # Document d'architecture technique
 │
 └── .github/
     └── workflows/
@@ -255,12 +286,23 @@ pip install -r requirements-train.txt
 python model/train.py
 ```
 
-`model/train.py` entraîne **3 modèles distincts** :
+`model/train.py` entraîne **5 modèles distincts** :
 - `prophet_global` — toutes activités confondues
-- `prophet_imprimerie` — pôle Imprimerie uniquement
-- `prophet_serigraphie` — pôle Sérigraphie uniquement
+- `prophet_imprimerie` — pôle Imprimerie
+- `prophet_serigraphie` — pôle Sérigraphie
+- `prophet_maintenance` — pôle Maintenance
+- `prophet_videosurveillance` — pôle Vidéosurveillance
 
 Chaque modèle est sérialisé dans `models/*.pkl` et ses prévisions sur **180 jours** sont poussées dans `schema_ia.previsions_prophet` (DELETE puis INSERT — idempotent).
+
+### Évaluation
+
+```bash
+# Cross-validation temporelle (MAE / MAPE / Coverage par horizon 30/60/90 j)
+python model/evaluate.py
+```
+
+`model/evaluate.py` exécute une cross-validation à fenêtre croissante (`initial=365j`, `period=30j`, `horizon=90j`) sur le modèle global et compare trois valeurs de `changepoint_prior_scale` (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
 
 ### Choix de Prophet
 
@@ -271,25 +313,68 @@ Prophet (Meta, 2017) a été retenu pour trois raisons :
 
 ---
 
-## 9. Application Streamlit
+## 9. API REST — FastAPI
+
+L'API constitue la **couche de service** entre l'interface Streamlit et la base de données : elle expose les prévisions Prophet pré-calculées et reçoit les nouvelles commandes. Tout client HTTP futur (application mobile, ERP, logiciel de caisse) peut consommer les mêmes endpoints sans accès direct à Supabase.
+
+### Endpoints exposés
+
+| Méthode | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/health` | Non | Health-check (supervision, réveil de l'instance Render) |
+| GET | `/api/v1/previsions/{service}` | Non | Prévisions Prophet pré-calculées (`global`, `Imprimerie`, `Sérigraphie`, `Maintenance`, `Vidéosurveillance`) |
+| POST | `/api/v1/commandes/` | `X-API-Key` | Enregistre une commande — transaction atomique : upsert client + upsert employé + insertion facture + ligne_facture |
+| GET | `/api/v1/kpis/` | Non | CA total, nombre de commandes, CA moyen journalier, pôle leader |
+
+Les contrats d'entrée/sortie sont définis par des modèles **Pydantic** (`api/schemas.py`) : validation automatique des types et des valeurs (`Literal` sur les libellés de service), réponse `422` en cas de payload invalide, documentation OpenAPI auto-générée.
+
+### Lancement local
+
+```bash
+pip install -r requirements-api.txt
+uvicorn api.main:app --reload
+# Documentation interactive : http://localhost:8000/docs
+```
+
+### Déploiement sur Render
+
+| Élément | Valeur |
+|---|---|
+| Fichier de dépendances | `requirements-api.txt` — **sans pandas ni `uvicorn[standard]`** (limite mémoire 512 Mo du plan gratuit ; leur inclusion provoquait un crash SIGSEGV / exit 139) |
+| Version Python | `runtime.txt` → 3.11 |
+| Commande de démarrage | `uvicorn api.main:app --host 0.0.0.0 --port $PORT` |
+| Documentation en production | `https://new-tech-d91x.onrender.com/docs` |
+
+> **Cold start :** sur le plan gratuit, l'instance s'endort après 15 minutes d'inactivité et met jusqu'à 30 secondes à redémarrer. Les clients httpx configurent un timeout de 15 s pour absorber partiellement ce délai.
+
+### Sécurité de l'API
+
+- **Authentification** : l'endpoint d'écriture exige une clé secrète dans l'en-tête `X-API-Key`, vérifiée **en temps constant** (`secrets.compare_digest`) contre la variable d'environnement `API_SECRET_KEY` — clé stockée dans les variables Render côté serveur et les secrets Streamlit côté client.
+- **CORS** : origines restreintes à l'URL Streamlit Cloud de production, méthodes limitées à GET/POST.
+
+---
+
+## 10. Application Streamlit
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-L'application expose trois onglets :
+L'application expose trois vues, routées selon le rôle de l'utilisateur authentifié :
 
-| Onglet | Utilisateur | Contenu |
+| Vue | Utilisateur | Contenu |
 |---|---|---|
-| **Saisie** | Gestionnaire | Formulaire de saisie des commandes, envoi direct en BDD |
+| **Saisie** | Gestionnaire | Formulaire de commandes — envoi à l'API via `POST /api/v1/commandes/` (authentifié `X-API-Key`) |
 | **Tableau de bord** | Directeur | KPIs Plotly (CA, top services, évolution mensuelle) |
-| **Prévisions IA** | Directeur | Courbes Prophet 180 jours avec intervalles de confiance |
+| **Prévisions IA** | Directeur | Courbes Prophet 180 jours via `GET /api/v1/previsions/{service}`, avec intervalles de prédiction à 80 % |
 
-**Déploiement :** l'application est hébergée sur Streamlit Cloud. Les secrets de connexion à Supabase sont injectés via le gestionnaire de secrets intégré de la plateforme — aucun identifiant n'est présent dans le dépôt.
+Les appels API sont mis en cache une heure (`@st.cache_data(ttl=3600)`) pour limiter les requêtes vers Render. L'interface intègre des mesures d'accessibilité WCAG / RGAA (alternatives textuelles aux graphiques, motifs de hachure en complément de la couleur, focus visible, attribut `lang="fr"`).
+
+**Déploiement :** l'application est hébergée sur Streamlit Cloud. Les secrets (identifiants bcrypt, URL et clé de l'API) sont injectés via le gestionnaire de secrets intégré de la plateforme — aucun identifiant n'est présent dans le dépôt.
 
 ---
 
-## 10. Intégration continue — GitHub Actions
+## 11. Intégration continue — GitHub Actions
 
 Le workflow `.github/workflows/retrain_prophet.yml` s'exécute automatiquement **le 1er de chaque mois à 02h00 UTC**, et peut être déclenché manuellement.
 
@@ -309,19 +394,21 @@ Les secrets de connexion à Supabase (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`
 
 ---
 
-## 11. Sécurité
+## 12. Sécurité
 
 | Mesure | Implémentation |
 |---|---|
-| Chiffrement en transit | HTTPS/TLS natif sur Supabase et Streamlit Cloud |
-| Gestion des secrets | `variable.env` local (hors dépôt) + GitHub Secrets (CI) + Streamlit Secrets (prod) |
+| Chiffrement en transit | HTTPS/TLS natif sur Supabase, Render et Streamlit Cloud |
+| Gestion des secrets | `variable.env` local (hors dépôt) + GitHub Secrets (CI) + Streamlit Secrets + variables Render (prod) |
 | Hachage des mots de passe | `bcrypt` — les mots de passe ne sont jamais stockés en clair |
-| Authentification | Page de login obligatoire avant tout accès à l'application |
+| Authentification application | Page de login obligatoire avant tout accès, contrôle d'accès par rôle (directeur / gestionnaire) |
+| Authentification API | Clé `X-API-Key` vérifiée en temps constant (`secrets.compare_digest`) sur l'endpoint d'écriture |
+| CORS | Origines restreintes à l'URL Streamlit Cloud de production |
 | Isolation des schémas | Trois schémas PostgreSQL étanches — aucune requête ne traverse les frontières de schéma |
 
 ---
 
-## 12. Tests automatisés
+## 13. Tests automatisés
 
 ```bash
 # Lancer la suite complète
@@ -339,15 +426,16 @@ pytest tests/ -v
 
 ---
 
-## 13. Perspectives d'évolution
+## 14. Perspectives d'évolution
 
 | Axe | Description | Complexité |
 |---|---|---|
-| **API REST (FastAPI)** | Isoler le modèle Prophet derrière une API indépendante pour le rendre accessible à d'autres applications de la PME | Moyenne |
-| **Multi-pôles** | Étendre le périmètre aux pôles Vidéosurveillance et Maintenance informatique | Faible |
+| **OAuth 2.0** | Remplacer la clé API statique par des tokens à durée de vie limitée (FastAPI `OAuth2PasswordBearer` / Supabase Auth) pour ouvrir l'API à des consommateurs tiers | Moyenne |
+| **Endpoint `/historique`** | Raccorder `dashboard.py` à l'API pour éliminer le dernier accès SQL direct depuis l'interface | Faible |
 | **Alertes automatiques** | Notifier le Directeur par email (SMTP) quand les prévisions détectent un risque de rupture de stock | Faible |
 | **Tests de non-régression** | Étendre la suite pytest avec des tests d'intégration vérifiant le round-trip ETL complet contre une base de test dédiée | Moyenne |
 | **Monitoring du modèle** | Mesurer la dérive du modèle (MAE, MAPE) après chaque réentraînement mensuel et logger les métriques en base | Moyenne |
+| **Git LFS / DVC** | Délocaliser les artefacts binaires `.pkl` hors de l'historique Git tout en conservant la traçabilité des versions | Faible |
 
 ---
 
