@@ -5,6 +5,7 @@ jamais dans le code source. Conformité OWASP A07 (Identification failures).
 """
 
 import os
+import secrets
 
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
@@ -18,7 +19,8 @@ def verifier_cle_api(api_key: str = Security(_API_KEY_HEADER)) -> str:
     Lève HTTP 401 si la clé est absente ou incorrecte.
     """
     cle_attendue = os.getenv("API_SECRET_KEY", "")
-    if not cle_attendue or api_key != cle_attendue:
+    # Comparaison en temps constant — protège contre les timing attacks
+    if not cle_attendue or not secrets.compare_digest(api_key or "", cle_attendue):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Clé API invalide ou manquante.",
