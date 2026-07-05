@@ -1,7 +1,8 @@
 """
 commandes.py — Endpoint POST /api/v1/commandes/
 Crée une nouvelle commande dans schema_analytics (transaction atomique).
-Extrait la logique métier de app/saisie.py pour l'exposer via REST.
+Concentre la logique métier de la saisie côté serveur : upsert client,
+upsert employé, résolution du service, insertion facture + ligne_facture.
 """
 
 import uuid
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/commandes", tags=["Commandes"])
 
 
 def _generer_facture_id(annee: int) -> str:
-    return f"FAC-{annee}-{uuid.uuid4().hex[:6].upper()}"
+    return f"FAC-{annee}-{uuid.uuid4().hex[:8].upper()}"
 
 
 @router.post(
