@@ -48,8 +48,8 @@ def predire(service: str, horizon_jours: int = 90) -> pd.DataFrame:
     Retourne un DataFrame avec les colonnes :
         ds          — date de prévision
         yhat        — prévision centrale (FCFA)
-        yhat_lower  — borne basse de l'intervalle de confiance
-        yhat_upper  — borne haute
+        yhat_lower  — borne basse de l'intervalle de prédiction à 80 %
+        yhat_upper  — borne haute de l'intervalle de prédiction à 80 %
 
     Lève une exception Streamlit si l'API est injoignable ou renvoie une erreur.
     """

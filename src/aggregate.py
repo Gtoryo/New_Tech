@@ -53,7 +53,7 @@ _SQL_JOURNALIERE = """
 """
 
 # Série par service : CA + nb commandes par (jour, pôle d'activité)
-# 'service' stocke le libellé textuel — pas de FK vers service pour cette table
+# 'service' stocke le libellé textuel, pas de FK vers service pour cette table
 _SQL_PAR_SERVICE = """
     SELECT
         f.date_facture              AS ds,

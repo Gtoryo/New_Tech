@@ -49,7 +49,7 @@ def _parser_date(valeur) -> datetime | None:
     """
     Convertit une valeur brute (str ou déjà datetime) en objet datetime.
     Gère 4 formats rencontrés dans les fichiers Excel sources :
-      - "15/06/2024"   (format standard congolais)
+      - "15/06/2024"   (format standard français)
       - "2024-06-15"   (ISO 8601)
       - "15-06-2024"   (tirets)
       - "Début Juin 2024" (texte libre → fixé au 1er du mois)
@@ -337,7 +337,7 @@ def transformer_clients(df: pd.DataFrame) -> pd.DataFrame:
     # Les doublons ont le nom en MAJUSCULES — on trie pour garder
     # la version en casse mixte (plus lisible) en premier
     df["_nom_lower"] = df["Nom_Client"].str.lower()
-    df = df.sort_values("Nom_Client")          # casse mixte avant MAJUSCULES
+    df = df.sort_values("Nom_Client")        # casse mixte avant MAJUSCULES
     df = df.drop_duplicates(subset=["_nom_lower"], keep="first")
     df = df.drop(columns=["_nom_lower"])
     print(f"  Doublons supprimés                         : {n_initial - len(df)}")

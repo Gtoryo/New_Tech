@@ -1,7 +1,7 @@
 """
 dashboard.py — Tableau de Bord Direction
 Page Streamlit : KPIs, historique CA mensuel, répartition par service,
-et courbe de prévision Prophet avec intervalle de confiance.
+et courbe de prévision Prophet avec intervalle de prédiction à 80 %.
 """
 
 import sys
@@ -308,7 +308,7 @@ def afficher_dashboard() -> None:
         y=list(df_prev["yhat_upper"]) + list(df_prev["yhat_lower"])[::-1],
         fill="toself", fillcolor=_hex_rgba(couleur, 0.18),
         line=dict(color="rgba(0,0,0,0)"),
-        name="Intervalle de confiance (80 %)", hoverinfo="skip",
+        name="Intervalle de prédiction (80 %)", hoverinfo="skip",
     ))
     fig_prev.add_trace(go.Scatter(
         x=df_prev["ds"], y=df_prev["yhat"],
@@ -334,7 +334,7 @@ def afficher_dashboard() -> None:
     # WCAG 1.1.1 — alternative textuelle au graphique de prévision
     with st.expander("📋 Données — Prévisions Prophet (tableau)"):
         st.caption(
-            "Tableau des prévisions journalières avec intervalle de confiance à 80 %. "
+            "Tableau des prévisions journalières avec intervalle de prédiction à 80 %. "
             "Toutes les valeurs sont en FCFA."
         )
         df_prev_display = df_prev[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
