@@ -20,8 +20,15 @@ __pycache__/
 dist/
 build/
 
-*info_projet/
+# Notes de travail internes (non versionnées)
+info_projet/conseil.md
+info_projet/role.md
 
 *generated_data
 
-# *Redaction
+# Rédaction du rapport (gérée hors dépôt)
+Redaction/
+SOMMAIRE.pdf
+
+# Artefacts de test
+.coverage
