@@ -6,25 +6,11 @@ Responsabilité unique : envoyer les DataFrames dans Supabase.
   charger_analytics() → schema_analytics (données propres, à venir)
 """
 
-import os
 import pandas as pd
 from datetime import datetime
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
+from sqlalchemy import text
 
-# Chargement des identifiants depuis variable.env (jamais écrits en dur)
-load_dotenv("variable.env")
-
-
-def _creer_moteur():
-    """Construit et retourne un moteur SQLAlchemy connecté à Supabase."""
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}"
-    )
-    return create_engine(url)
+from src.db import creer_moteur
 
 
 def charger_brut(dfs: dict[str, pd.DataFrame]) -> None:
@@ -37,7 +23,7 @@ def charger_brut(dfs: dict[str, pd.DataFrame]) -> None:
         dfs — dictionnaire retourné par extract.extraire_tout()
               clés attendues : 'ventes', 'depenses', 'clients'
     """
-    moteur = _creer_moteur()
+    moteur = creer_moteur()
     horodatage = datetime.now()
 
     # Correspondance clé du dictionnaire → nom de table dans schema_brut
@@ -119,7 +105,7 @@ def charger_analytics(data: dict) -> None:
         data — dictionnaire retourné par transform.transformer_tout()
                clés : 'ventes', 'depenses', 'clients'
     """
-    moteur  = _creer_moteur()
+    moteur  = creer_moteur()
     ventes  = data["ventes"]
     depenses = data["depenses"]
 

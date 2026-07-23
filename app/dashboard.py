@@ -10,17 +10,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import os
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from dotenv import load_dotenv
-from sqlalchemy import create_engine
 
+from src.db import creer_moteur
 from model.predict import predire
-
-load_dotenv(ROOT / "variable.env")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE COULEURS ET MOTIFS PAR SERVICE
@@ -63,13 +59,8 @@ def _fmt(valeur: int) -> str:
 
 @st.cache_resource
 def _moteur():
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}?sslmode=require"
-    )
-    return create_engine(url)
+    """Moteur SQLAlchemy mis en cache pour toute la session Streamlit."""
+    return creer_moteur()
 
 
 @st.cache_data(ttl=3600)

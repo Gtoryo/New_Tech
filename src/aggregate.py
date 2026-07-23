@@ -13,25 +13,18 @@ Colonnes produites (format natif Prophet) :
   rafraichi_le  TIMESTAMP — horodatage du dernier chargement
 """
 
-import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
+from sqlalchemy import text
 
-load_dotenv("variable.env")
+# Permet `python src/aggregate.py` en autonome comme l'import via main.py
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-
-def _creer_moteur():
-    """Construit et retourne un moteur SQLAlchemy connecté à Supabase."""
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}"
-    )
-    return create_engine(url)
+from src.db import creer_moteur
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,7 +74,7 @@ def alimenter_series() -> None:
 
     Idempotente : TRUNCATE avant chaque INSERT, donc re-exécutable sans doublons.
     """
-    moteur      = _creer_moteur()
+    moteur      = creer_moteur()
     horodatage  = datetime.now()
 
     print("\n-- AGRÉGATION SCHEMA_IA ----------------------------------------")

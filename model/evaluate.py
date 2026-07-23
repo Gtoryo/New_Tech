@@ -78,7 +78,62 @@ def metriques_par_horizon(modele: Prophet, label: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. COMPARAISON changepoint_prior_scale
+# 2. ERREUR APRÈS AGRÉGATION TEMPORELLE (granularité de décision métier)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def metriques_agregees(modele: Prophet, label: str) -> pd.DataFrame:
+    """
+    Recalcule l'erreur après agrégation des prévisions à la semaine et au mois.
+
+    Justification méthodologique : la série journalière est intermittente
+    (nombreux jours à faible chiffre d'affaires), ce qui gonfle mécaniquement
+    le MAPE journalier — une erreur de 18 000 FCFA sur un jour réalisé à
+    12 000 FCFA produit à elle seule 150 %. Or la décision métier
+    (réapprovisionnement en consommables) se prend à la semaine ou au mois.
+    Mesurer l'erreur à cette granularité reflète l'usage réel du modèle.
+
+    Le réel (y) et la prévision (yhat) sont sommés sur exactement les mêmes
+    jours au sein de chaque point de coupure : la comparaison reste donc
+    non biaisée, y compris pour les périodes partielles en bord d'horizon.
+    """
+    print(f"\n  Agrégation temporelle [{label}] en cours...", end=" ", flush=True)
+
+    df_cv = cross_validation(
+        modele,
+        initial="365 days",
+        period="30 days",
+        horizon="90 days",
+        parallel=None,
+    )
+    print("OK")
+
+    lignes = []
+    for libelle, regle in (("Journalière", "D"), ("Hebdomadaire", "W"), ("Mensuelle", "M")):
+        df = df_cv.copy()
+        df["periode"] = df["ds"].dt.to_period(regle)
+
+        # Agrégation par (point de coupure, période) pour ne pas cumuler
+        # plusieurs fois la même date issue de cutoffs différents.
+        agg = (
+            df.groupby(["cutoff", "periode"])[["y", "yhat"]]
+            .sum()
+            .reset_index()
+        )
+        agg = agg[agg["y"] > 0]   # MAPE indéfini sur une période à CA nul
+
+        erreur_abs = (agg["y"] - agg["yhat"]).abs()
+        lignes.append({
+            "Granularité":  libelle,
+            "N périodes":   len(agg),
+            "MAE (FCFA)":   int(erreur_abs.mean().round(0)),
+            "MAPE (%)":     round((erreur_abs / agg["y"]).mean() * 100, 1),
+        })
+
+    return pd.DataFrame(lignes)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. COMPARAISON changepoint_prior_scale
 # ─────────────────────────────────────────────────────────────────────────────
 
 def comparer_changepoint(modele_ref: Prophet) -> pd.DataFrame:
@@ -148,7 +203,12 @@ if __name__ == "__main__":
     df_metriques = metriques_par_horizon(modele_global, "global")
     _afficher_df(df_metriques)
 
-    # ── Tableau 2 : comparaison changepoint_prior_scale ──────────────────────
+    # ── Tableau 2 : erreur selon la granularité d'agrégation ─────────────────
+    _afficher_titre("ERREUR SELON LA GRANULARITÉ DE DÉCISION — modèle global")
+    df_agg = metriques_agregees(modele_global, "global")
+    _afficher_df(df_agg)
+
+    # ── Tableau 3 : comparaison changepoint_prior_scale ──────────────────────
     _afficher_titre("COMPARAISON changepoint_prior_scale")
     print("  Réentraînement de 3 variantes en cours (peut prendre 2-3 min)...\n")
     df_cp = comparer_changepoint(modele_global)

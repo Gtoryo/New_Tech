@@ -11,6 +11,8 @@ from src.transform import (
     _normaliser_service,
     _normaliser_ville,
     transformer_ventes,
+    transformer_depenses,
+    transformer_clients,
 )
 
 
@@ -144,3 +146,91 @@ class TestTransformerVentes:
         result = transformer_ventes(df_ventes_minimal)
         for col in ["facture_id", "quantite", "prix_unitaire", "total_ligne"]:
             assert col in result["lignes"].columns
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# transformer_depenses
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTransformerDepenses:
+
+    @pytest.fixture
+    def df_depenses_minimal(self):
+        # Valeurs en chaînes de caractères : reproduit la lecture dtype=str
+        # de la couche Extract (extract.py).
+        return pd.DataFrame({
+            "Date":             ["15/06/2024", "16/06/2024", "16/06/2024"],
+            "Fournisseur":      ["Bureau Top", "Bureau Top", "Impex Congo"],
+            "Article":          ["Ramette A4", "Ramette A4", "Encre noire"],
+            "Categorie":        ["Papier",     "Papier",     "Encre"],
+            "Quantite":         ["10",         "10",         "3"],
+            "Prix_Achat_Total": ["-45000",     "-45000",     "18000"],
+            "Mode_Paiement":    ["Espèces",    "Espèces",    "Mobile Money"],
+        })
+
+    def test_cles_retournees(self, df_depenses_minimal):
+        result = transformer_depenses(df_depenses_minimal)
+        assert set(result.keys()) == {"fournisseurs", "categories", "achats"}
+
+    def test_montants_negatifs_corriges(self, df_depenses_minimal):
+        # Les Prix_Achat_Total négatifs doivent être ramenés en valeur absolue
+        result = transformer_depenses(df_depenses_minimal)
+        assert (result["achats"]["prix_achat_total"].dropna() >= 0).all()
+
+    def test_fournisseurs_dedupliques(self, df_depenses_minimal):
+        # "Bureau Top" apparaît 2 fois → une seule ligne après déduplication
+        result = transformer_depenses(df_depenses_minimal)
+        assert len(result["fournisseurs"]) == 2
+
+    def test_categories_dedupliquees(self, df_depenses_minimal):
+        result = transformer_depenses(df_depenses_minimal)
+        assert len(result["categories"]) == 2
+
+    def test_dates_achat_parsees(self, df_depenses_minimal):
+        # Toutes les dates sont valides → aucune ligne écartée pour date manquante
+        result = transformer_depenses(df_depenses_minimal)
+        assert "date_achat" in result["achats"].columns
+        assert result["achats"]["date_achat"].notna().all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# transformer_clients
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTransformerClients:
+
+    @pytest.fixture
+    def df_clients_minimal(self):
+        return pd.DataFrame({
+            "Nom_Client": ["Pharmacie X", "PHARMACIE X", "Client Y"],
+            "Entreprise": ["Pharmacie X", "Pharmacie X", None],
+            "Telephone":  ["0601",        "0601",         "0602"],
+            "Email":      ["a@b.cg",      None,           None],
+            "Ville":      ["pn",          "PN",           "Brazzaville"],
+        })
+
+    def test_colonnes_finales(self, df_clients_minimal):
+        result = transformer_clients(df_clients_minimal)
+        assert set(result.columns) == {
+            "nom_client", "entreprise", "telephone", "email", "ville"
+        }
+
+    def test_deduplication_insensible_casse(self, df_clients_minimal):
+        # "Pharmacie X" et "PHARMACIE X" = un seul client → 2 lignes au total
+        result = transformer_clients(df_clients_minimal)
+        assert len(result) == 2
+        noms_bas = result["nom_client"].str.lower().tolist()
+        assert noms_bas.count("pharmacie x") == 1
+
+    def test_ville_normalisee(self, df_clients_minimal):
+        result = transformer_clients(df_clients_minimal)
+        villes = set(result["ville"].dropna())
+        assert "Pointe-Noire" in villes   # pn / PN → forme canonique
+        assert "Brazzaville" in villes    # ville hors périmètre PN inchangée
+
+    def test_conserve_version_casse_mixte(self, df_clients_minimal):
+        # Entre "Pharmacie X" et "PHARMACIE X", la version lisible est retenue
+        # (régression : un tri ASCII simple conserverait les MAJUSCULES).
+        result = transformer_clients(df_clients_minimal)
+        retenu = [n for n in result["nom_client"] if n.lower() == "pharmacie x"]
+        assert retenu == ["Pharmacie X"]

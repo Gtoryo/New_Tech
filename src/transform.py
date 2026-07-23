@@ -334,12 +334,16 @@ def transformer_clients(df: pd.DataFrame) -> pd.DataFrame:
     df["Ville"] = df["Ville"].apply(_normaliser_ville)
 
     # ── ÉTAPE 3 : Déduplication insensible à la casse ────────────────────────
-    # Les doublons ont le nom en MAJUSCULES — on trie pour garder
-    # la version en casse mixte (plus lisible) en premier
-    df["_nom_lower"] = df["Nom_Client"].str.lower()
-    df = df.sort_values("Nom_Client")        # casse mixte avant MAJUSCULES
+    # Les doublons ont le nom en MAJUSCULES ; on conserve la version en casse
+    # mixte, plus lisible. Un tri alphabétique simple ne suffit pas : en ASCII
+    # les majuscules précèdent les minuscules ("PHARMACIE X" < "Pharmacie X"),
+    # ce qui conserverait justement la variante à écarter. On trie donc sur un
+    # indicateur de casse explicite (False = casse mixte, retenue en premier).
+    df["_nom_lower"]     = df["Nom_Client"].str.lower()
+    df["_est_majuscule"] = df["Nom_Client"].str.isupper()
+    df = df.sort_values(["_nom_lower", "_est_majuscule"])
     df = df.drop_duplicates(subset=["_nom_lower"], keep="first")
-    df = df.drop(columns=["_nom_lower"])
+    df = df.drop(columns=["_nom_lower", "_est_majuscule"])
     print(f"  Doublons supprimés                         : {n_initial - len(df)}")
 
     # ── ÉTAPE 4 : Renommage et sélection des colonnes finales ────────────────

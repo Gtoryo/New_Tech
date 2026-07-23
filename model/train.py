@@ -7,41 +7,43 @@ par série temporelle et sauvegarder chaque modèle dans models/.
                       models/prophet_{service}.pkl  (un par pôle)
 """
 
-import os
+import sys
 import pickle
 import re
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from prophet import Prophet
-from sqlalchemy import create_engine
-from dotenv import load_dotenv
+from sqlalchemy import text
 
-# Supprime les logs verbeux de Stan (moteur de calcul interne de Prophet)
+# Racine du projet ajoutée au path : autorise `python model/train.py` (CI)
+# comme l'import depuis la racine.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.db import creer_moteur
+
+# Graine fixe : rend les intervalles de prédiction (yhat_lower/yhat_upper)
+# reproductibles d'une exécution à l'autre. Prophet 1.1.6 échantillonne
+# l'incertitude via le RNG global de numpy (np.random.*), qu'il suffit donc
+# de fixer avant chaque predict().
+SEED = 42
+np.random.seed(SEED)
+
+# Journalisation applicative (remplace les print) ; Stan reste silencieux.
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
-
-load_dotenv("variable.env")
+logger = logging.getLogger(__name__)
 
 # Dossier de sauvegarde des modèles (créé automatiquement s'il n'existe pas)
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_DIR = ROOT / "models"
 MODELS_DIR.mkdir(exist_ok=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UTILITAIRES
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _creer_moteur():
-    """Construit et retourne un moteur SQLAlchemy connecté à Supabase."""
-    url = (
-        f"postgresql+psycopg2://"
-        f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD').strip()}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}?sslmode=require"
-    )
-    return create_engine(url)
-
 
 def _slugify(texte: str) -> str:
     """Convertit un libellé accentué en nom de fichier ASCII sûr."""
@@ -65,7 +67,7 @@ def _entrainer_prophet(df: pd.DataFrame, label: str) -> Prophet:
       daily_seasonality   = False  — inutile avec des observations journalières
       changepoint_prior_scale=0.05 — souplesse modérée face aux ruptures de tendance
     """
-    print(f"  Entraînement [{label}] sur {len(df)} observations...", end=" ", flush=True)
+    logger.info("Entraînement [%s] sur %d observations...", label, len(df))
 
     modele = Prophet(
         yearly_seasonality=True,
@@ -75,7 +77,7 @@ def _entrainer_prophet(df: pd.DataFrame, label: str) -> Prophet:
         stan_backend="CMDSTANPY",
     )
     modele.fit(df[["ds", "y"]])
-    print("OK")
+    logger.info("Modèle [%s] entraîné.", label)
     return modele
 
 
@@ -83,7 +85,7 @@ def _sauvegarder(modele: Prophet, chemin: Path) -> None:
     """Sérialise le modèle entraîné dans un fichier .pkl."""
     with open(chemin, "wb") as f:
         pickle.dump(modele, f)
-    print(f"  Sauvegarde -> {chemin.relative_to(chemin.parent.parent)}")
+    logger.info("Sauvegarde -> %s", chemin.relative_to(chemin.parent.parent))
 
 
 def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180) -> None:
@@ -93,11 +95,10 @@ def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180
     Les anciennes prévisions du service sont supprimées avant insertion
     pour garantir l'idempotence (ré-exécutable sans créer de doublons).
     """
-    import numpy as np
-    from sqlalchemy import text
+    moteur = creer_moteur()
 
-    moteur = _creer_moteur()
-
+    # Reproductibilité des bornes d'intervalle (échantillonnage numpy).
+    np.random.seed(SEED)
     futur      = modele.make_future_dataframe(periods=horizon, freq="D")
     previsions = modele.predict(futur)
 
@@ -123,7 +124,7 @@ def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180
             schema="schema_ia", if_exists="append", index=False, method="multi",
         )
 
-    print(f"  -> {len(df)} previsions [{service}] sauvegardees en base")
+    logger.info("-> %d prévisions [%s] sauvegardées en base.", len(df), service)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,12 +137,12 @@ def entrainer_tout() -> None:
       1. Un modèle global (toutes activités)
       2. Un modèle par pôle de service
     """
-    moteur = _creer_moteur()
+    moteur = creer_moteur()
 
-    print("\n-- ENTRAÎNEMENT PROPHET ----------------------------------------")
+    logger.info("== ENTRAÎNEMENT PROPHET ==")
 
     # ── MODÈLE GLOBAL ────────────────────────────────────────────────────────
-    print("\n[1/2] Série globale (toutes activités confondues)")
+    logger.info("[1/2] Série globale (toutes activités confondues)")
     with moteur.connect() as conn:
         df_global = pd.read_sql(
             "SELECT ds, y FROM schema_ia.serie_ventes_journalieres ORDER BY ds",
@@ -155,7 +156,7 @@ def entrainer_tout() -> None:
     _sauvegarder_previsions_db(modele_global, "global")
 
     # ── MODÈLES PAR SERVICE ───────────────────────────────────────────────────
-    print("\n[2/2] Séries par pôle de service")
+    logger.info("[2/2] Séries par pôle de service")
     with moteur.connect() as conn:
         df_services = pd.read_sql(
             "SELECT ds, y, service FROM schema_ia.serie_ventes_par_service ORDER BY ds",
@@ -175,7 +176,7 @@ def entrainer_tout() -> None:
         _sauvegarder(modele, MODELS_DIR / nom_fichier)
         _sauvegarder_previsions_db(modele, service)
 
-    print("\n-- FIN ENTRAÎNEMENT PROPHET ------------------------------------\n")
+    logger.info("== FIN ENTRAÎNEMENT PROPHET ==")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,4 +184,8 @@ def entrainer_tout() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
     entrainer_tout()
