@@ -286,40 +286,66 @@ def afficher_dashboard() -> None:
     date_limite  = df_hist["ds"].max() - pd.Timedelta(days=180)
     df_hist_6m   = df_hist[df_hist["ds"] >= date_limite].copy()
     df_hist_6m["mois"] = df_hist_6m["ds"].dt.to_period("M").dt.to_timestamp()
-    df_hist_mois = df_hist_6m.groupby("mois")["y"].sum().reset_index()
+    df_hist_mois = (
+        df_hist_6m.groupby("mois")
+        .agg(y=("y", "sum"), n_jours=("ds", "size"))
+        .reset_index()
+    )
+    # On écarte les mois partiels en bord de série (barre trompeuse)
+    df_hist_pleins = df_hist_mois[df_hist_mois["n_jours"] >= 20]
+    if not df_hist_pleins.empty:
+        df_hist_mois = df_hist_pleins
+
+    # Prévision agrégée au mois : même granularité que l'historique. Sans cela,
+    # la prévision journalière (~20x plus petite qu'une somme mensuelle) est
+    # écrasée sous les barres mensuelles et paraît absente du graphique.
+    df_prev_mois = (
+        df_prev.assign(mois=df_prev["ds"].dt.to_period("M").dt.to_timestamp())
+        .groupby("mois")
+        .agg(
+            yhat=("yhat", "sum"),
+            yhat_lower=("yhat_lower", "sum"),
+            yhat_upper=("yhat_upper", "sum"),
+            n_jours=("ds", "size"),
+        )
+        .reset_index()
+    )
+    df_prev_pleins = df_prev_mois[df_prev_mois["n_jours"] >= 20]
+    if not df_prev_pleins.empty:
+        df_prev_mois = df_prev_pleins
 
     fig_prev = go.Figure()
     fig_prev.add_trace(go.Bar(
         x=df_hist_mois["mois"], y=df_hist_mois["y"],
-        name="Historique (mensuel)", marker_color=couleur, opacity=0.55,
+        name="Historique (CA mensuel)", marker_color=couleur, opacity=0.55,
         hovertemplate="Historique<br>Mois : %{x|%B %Y}<br>CA : %{y:,.0f} FCFA<extra></extra>",
     ))
     fig_prev.add_trace(go.Scatter(
-        x=list(df_prev["ds"]) + list(df_prev["ds"])[::-1],
-        y=list(df_prev["yhat_upper"]) + list(df_prev["yhat_lower"])[::-1],
+        x=list(df_prev_mois["mois"]) + list(df_prev_mois["mois"])[::-1],
+        y=list(df_prev_mois["yhat_upper"]) + list(df_prev_mois["yhat_lower"])[::-1],
         fill="toself", fillcolor=_hex_rgba(couleur, 0.18),
         line=dict(color="rgba(0,0,0,0)"),
         name="Intervalle de prédiction (80 %)", hoverinfo="skip",
     ))
     fig_prev.add_trace(go.Scatter(
-        x=df_prev["ds"], y=df_prev["yhat"],
-        name="Prévision centrale (yhat)",
-        line=dict(color=couleur, width=2.5, dash="dash"), mode="lines",
-        hovertemplate="Date : %{x|%d/%m/%Y}<br>Prévision : %{y:,.0f} FCFA<extra></extra>",
+        x=df_prev_mois["mois"], y=df_prev_mois["yhat"],
+        name="Prévision (CA mensuel)",
+        line=dict(color=couleur, width=2.5, dash="dash"), mode="lines+markers",
+        hovertemplate="Mois : %{x|%B %Y}<br>Prévision : %{y:,.0f} FCFA<extra></extra>",
     ))
     fig_prev.update_layout(
         title_text=f"Prévision Prophet — {service_choisi} — horizon {horizon} jours",
         title_font_size=1,
         template="plotly_white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="Date", yaxis_title="CA (FCFA)",
+        xaxis_title="Mois", yaxis_title="CA mensuel (FCFA)",
         margin=dict(t=10, b=10), height=420,
     )
     st.plotly_chart(fig_prev, use_container_width=True)
 
     st.caption(
-        f"Prévision centrale : **{_fmt(int(df_prev['yhat'].mean()))} FCFA/jour** en moyenne  •  "
-        f"Seuil stock recommandé : **{_fmt(int(df_prev['yhat_upper'].max()))} FCFA/jour** (borne haute)"
+        f"Prévision moyenne : **{_fmt(int(df_prev_mois['yhat'].mean()))} FCFA/mois**  •  "
+        f"Seuil stock (mois le plus chargé) : **{_fmt(int(df_prev_mois['yhat_upper'].max()))} FCFA** (borne haute)"
     )
 
     # WCAG 1.1.1 — alternative textuelle au graphique de prévision
