@@ -89,11 +89,6 @@ def _serie_par_service() -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=3600)
-def _previsions(service: str, horizon: int) -> pd.DataFrame:
-    return predire(service, horizon)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE PRINCIPALE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,9 +120,11 @@ def afficher_dashboard() -> None:
         st.caption("🤖 Modèle : Prophet 1.1.6")
 
     # ── Chargement des données ────────────────────────────────────────────────
+    # Les prévisions (appel API) sont chargées plus bas, juste avant la section 4,
+    # pour ne pas bloquer l'affichage des KPI et graphiques pendant un éventuel
+    # cold start de l'instance Render.
     df_global   = _serie_globale()
     df_services = _serie_par_service()
-    df_prev     = _previsions(service_choisi, horizon)
 
     # ── En-tête ───────────────────────────────────────────────────────────────
     st.title("📊 Tableau de Bord — Direction")
@@ -268,10 +265,13 @@ def afficher_dashboard() -> None:
     st.divider()
 
     # ── Section 4 — Prévision Prophet ─────────────────────────────────────────
+    # Appel API chargé ici (et non en tête) : les sections 1 à 3 s'affichent
+    # immédiatement même si l'instance Render doit se réveiller (jusqu'à ~50 s).
+    df_prev = predire(service_choisi, horizon)
     if df_prev.empty:
         st.warning(
-            "Prévisions indisponibles — l'API est en cours de démarrage (cold start Render). "
-            "Rechargez la page dans 30 secondes."
+            "Prévisions momentanément indisponibles — l'API se réveille "
+            "(cold start Render). Rechargez la page dans ~30 secondes."
         )
         return
 

@@ -152,7 +152,7 @@ def afficher_saisie() -> None:
             f"{_API_URL}/api/v1/commandes/",
             json=payload,
             headers={"X-API-Key": _API_KEY},
-            timeout=15.0,
+            timeout=60.0,  # tolère le cold start Render (réveil jusqu'à ~50 s)
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -164,8 +164,8 @@ def afficher_saisie() -> None:
         return
     except httpx.RequestError:
         st.error(
-            f"API injoignable ({_API_URL}). "
-            "Vérifiez que le serveur est démarré (`uvicorn api.main:app --reload`)."
+            "L'API met quelques secondes à démarrer (cold start Render). "
+            "Réessayez dans ~30 secondes."
         )
         return
 
