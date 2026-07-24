@@ -100,7 +100,7 @@ Le pipeline suit une architecture en couches étanches, inspirée du patron *Med
 | Authentification | bcrypt | 4.2.1 | Hachage des mots de passe |
 | Gestion secrets | python-dotenv | 1.0.1 | Variables d'environnement locales |
 | CI/CD | GitHub Actions | — | Réentraînement mensuel automatisé |
-| Tests | pytest | 8.3.5 | Tests unitaires ETL + Prophet |
+| Tests | pytest | 8.3.5 | Tests unitaires (ETL, Prophet) et d'intégration (API) |
 
 ---
 
@@ -119,6 +119,7 @@ New_Tech/
 ├── variable.env                # Variables d'environnement locales (non commité)
 │
 ├── src/                        # Pipeline ETL — couches séparées
+│   ├── db.py                   # Fabrique de moteur SQLAlchemy partagée (DRY)
 │   ├── extract.py              # Lecture des 3 fichiers Excel → DataFrames bruts
 │   ├── transform.py            # Nettoyage, typage, normalisation
 │   ├── load.py                 # Chargement schema_brut + schema_analytics
@@ -129,7 +130,7 @@ New_Tech/
 │   ├── predict.py              # Client API — GET prévisions (httpx + cache Streamlit)
 │   └── evaluate.py             # Cross-validation MAE/MAPE/Coverage (évaluation)
 │
-├── models/                     # Modèles sérialisés (.pkl) — générés à l'exécution
+├── models/                     # Modèles sérialisés (.pkl) — versionnés dans Git
 │   ├── prophet_global.pkl
 │   ├── prophet_imprimerie.pkl
 │   ├── prophet_serigraphie.pkl
@@ -157,7 +158,8 @@ New_Tech/
 │   └── suivi_clients_prospects.xlsx
 │
 ├── tests/                      # Suite de tests automatisés
-│   ├── test_transform.py       # 25 tests unitaires ETL
+│   ├── test_transform.py       # 34 tests unitaires ETL
+│   ├── test_api.py             # 16 tests d'intégration API (sans base de données)
 │   └── test_model.py           # 11 tests unitaires Prophet
 │
 ├── info_projet/                # Documentation de cadrage
@@ -206,9 +208,9 @@ Données agrégées au format natif Prophet (`ds` = date, `y` = valeur), aliment
 
 | Table | Colonnes | Description |
 |---|---|---|
-| `serie_ventes_journalieres` | `ds`, `y`, `nb_commandes`, `rafraichi_le` | CA global par jour |
-| `serie_ventes_par_service` | `ds`, `service`, `y`, `nb_commandes`, `rafraichi_le` | CA par jour et par pôle d'activité |
-| `previsions_prophet` | `ds`, `yhat`, `yhat_lower`, `yhat_upper`, `service`, `charge_le` | Prévisions 180 jours (lecture par le dashboard) |
+| `serie_ventes_journalieres` | `id_serie`, `ds`, `y`, `nb_commandes`, `rafraichi_le` | CA global par jour |
+| `serie_ventes_par_service` | `id_serie`, `ds`, `service`, `y`, `nb_commandes`, `rafraichi_le` | CA par jour et par pôle d'activité |
+| `previsions_prophet` | `id`, `service`, `ds`, `yhat`, `yhat_lower`, `yhat_upper`, `genere_le` | Prévisions 180 jours (lues par l'API) |
 
 ---
 
@@ -302,7 +304,11 @@ Chaque modèle est sérialisé dans `models/*.pkl` et ses prévisions sur **180 
 python model/evaluate.py
 ```
 
-`model/evaluate.py` exécute une cross-validation à fenêtre croissante (`initial=365j`, `period=30j`, `horizon=90j`) sur le modèle global et compare trois valeurs de `changepoint_prior_scale` (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
+`model/evaluate.py` exécute une cross-validation à fenêtre croissante (`initial=365j`, `period=30j`, `horizon=90j`) sur le modèle global et produit trois tableaux :
+
+1. **MAE / MAPE / Coverage par horizon** (30, 60 et 90 jours) ;
+2. **Erreur selon la granularité de décision** — l'erreur est recalculée après agrégation des prévisions au jour, à la semaine et au mois. Le MAPE journalier, élevé du fait de la nature intermittente de la série (nombreux jours à faible chiffre d'affaires), chute fortement une fois les prévisions agrégées : c'est à l'échelle hebdomadaire et mensuelle, celle à laquelle les réapprovisionnements sont décidés, que la prévision est réellement exploitable ;
+3. **Comparaison de `changepoint_prior_scale`** (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
 
 ### Choix de Prophet
 
@@ -345,7 +351,7 @@ uvicorn api.main:app --reload
 | Commande de démarrage | `uvicorn api.main:app --host 0.0.0.0 --port $PORT` |
 | Documentation en production | `https://new-tech-d91x.onrender.com/docs` |
 
-> **Cold start :** sur le plan gratuit, l'instance s'endort après 15 minutes d'inactivité et met jusqu'à 30 secondes à redémarrer. Les clients httpx configurent un timeout de 15 s pour absorber partiellement ce délai.
+> **Cold start :** sur le plan gratuit, l'instance s'endort après 15 minutes d'inactivité et met jusqu'à **~50 secondes** à redémarrer. Les clients httpx configurent un timeout de **60 s** pour absorber ce délai ; côté dashboard, l'appel de prévision est de plus **différé** (déclenché uniquement au moment d'afficher la courbe) afin que les indicateurs et graphiques historiques restent immédiatement disponibles pendant le réveil. Le passage à un plan payant supprimerait cette latence.
 
 ### Sécurité de l'API
 
@@ -360,15 +366,15 @@ uvicorn api.main:app --reload
 streamlit run streamlit_app.py
 ```
 
-L'application expose trois vues, routées selon le rôle de l'utilisateur authentifié :
+L'application expose trois vues, routées selon le rôle de l'utilisateur authentifié (`streamlit_app.py` consulte `st.session_state["role"]` à chaque rechargement) :
 
 | Vue | Utilisateur | Contenu |
 |---|---|---|
+| **Connexion** | — | Authentification par `bcrypt`, attribution du rôle (directeur / gestionnaire) |
+| **Tableau de bord** | Directeur | KPIs Plotly (CA total, commandes, CA moyen, pôle leader), évolution mensuelle empilée, répartition par pôle, et **section de prévision Prophet** alimentée par `GET /api/v1/previsions/{service}` (intervalle de prédiction à 80 %). Horizon réglable de 30 à 180 jours (défaut 90) ; historique et prévision sont affichés à la **granularité mensuelle** pour rester à la même échelle |
 | **Saisie** | Gestionnaire | Formulaire de commandes — envoi à l'API via `POST /api/v1/commandes/` (authentifié `X-API-Key`) |
-| **Tableau de bord** | Directeur | KPIs Plotly (CA, top services, évolution mensuelle) |
-| **Prévisions IA** | Directeur | Courbes Prophet 180 jours via `GET /api/v1/previsions/{service}`, avec intervalles de prédiction à 80 % |
 
-Les appels API sont mis en cache une heure (`@st.cache_data(ttl=3600)`) pour limiter les requêtes vers Render. L'interface intègre des mesures d'accessibilité WCAG / RGAA (alternatives textuelles aux graphiques, motifs de hachure en complément de la couleur, focus visible, attribut `lang="fr"`).
+Les appels API sont mis en cache une heure (`@st.cache_data(ttl=3600)`) pour limiter les requêtes vers Render. **Seules les réponses réussies sont mises en cache** : un échec transitoire (cold start) lève une exception, que le cache ne mémorise pas, et il est donc réessayé au rechargement suivant plutôt que figé pendant une heure. L'interface intègre des mesures d'accessibilité WCAG / RGAA (alternatives textuelles aux graphiques, motifs de hachure en complément de la couleur, focus visible, attribut `lang="fr"`).
 
 **Déploiement :** l'application est hébergée sur Streamlit Cloud. Les secrets (identifiants bcrypt, URL et clé de l'API) sont injectés via le gestionnaire de secrets intégré de la plateforme — aucun identifiant n'est présent dans le dépôt.
 
@@ -414,13 +420,16 @@ Les secrets de connexion à Supabase (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`
 # Lancer la suite complète
 pytest tests/ -v
 
-# Résultats attendus : 36 tests (25 ETL + 11 Prophet)
+# Résultats attendus : 61 tests (34 ETL + 16 API + 11 Prophet)
 ```
 
 | Fichier | Tests | Ce qui est vérifié |
 |---|---|---|
-| `tests/test_transform.py` | 25 | `parser_date` (4 formats), `normaliser_service` (7 variantes), `normaliser_ville`, `transformer_ventes` (doublons, totaux recalculés) |
+| `tests/test_transform.py` | 34 | `parser_date` (4 formats), `normaliser_service` (7 variantes), `normaliser_ville`, `transformer_ventes` (doublons, totaux recalculés), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
+| `tests/test_api.py` | 16 | **Tests d'intégration** — routage, authentification `X-API-Key` (401 sur clé absente ou invalide), validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base de données |
 | `tests/test_model.py` | 11 | `slugify`, entraînement Prophet end-to-end, colonnes de sortie, horizon de prévision 180 jours |
+
+**Couverture mesurée** (`pytest --cov`) : `src/transform.py` à **98 %** — module qui concentre toute la logique de qualité des données — et `api/auth.py`, `api/schemas.py`, `api/main.py` à **100 %**. Les modules exigeant une connexion à Supabase (`extract`, `load`, `aggregate`, `db`) ne sont pas couverts en test unitaire : leur validation relèverait d'un test de round-trip ETL sur une base PostgreSQL dédiée, identifié en perspective d'évolution.
 
 `conftest.py` à la racine ajoute le projet au `sys.path` pour que les imports fonctionnent sans installation en mode développement.
 
