@@ -442,7 +442,8 @@ pytest tests/ -v
 | **OAuth 2.0** | Remplacer la clé API statique par des tokens à durée de vie limitée (FastAPI `OAuth2PasswordBearer` / Supabase Auth) pour ouvrir l'API à des consommateurs tiers | Moyenne |
 | **Endpoint `/historique`** | Raccorder `dashboard.py` à l'API pour éliminer le dernier accès SQL direct depuis l'interface | Faible |
 | **Alertes automatiques** | Notifier le Directeur par email (SMTP) quand les prévisions détectent un risque de rupture de stock | Faible |
-| **Tests de non-régression** | Étendre la suite pytest avec des tests d'intégration vérifiant le round-trip ETL complet contre une base de test dédiée | Moyenne |
+| **Saisie multi-lignes** | Permettre plusieurs prestations sur une même facture — `ligne_facture` le supporte déjà, l'évolution porte sur le contrat `CommandeIn` et l'ergonomie du formulaire (aucune modification du schéma) | Faible |
+| **Test de round-trip ETL** | Compléter les tests d'intégration existants (API) par un test de bout en bout Extract → Transform → Load → Aggregate contre une base PostgreSQL de test dédiée | Moyenne |
 | **Monitoring du modèle** | Mesurer la dérive du modèle (MAE, MAPE) après chaque réentraînement mensuel et logger les métriques en base | Moyenne |
 | **Git LFS / DVC** | Délocaliser les artefacts binaires `.pkl` hors de l'historique Git tout en conservant la traçabilité des versions | Faible |
 
