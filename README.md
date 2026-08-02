@@ -392,9 +392,16 @@ Le workflow `.github/workflows/retrain_prophet.yml` s'exécute automatiquement *
 3. Installation des dépendances (requirements-train.txt)
 4. Installation de CmdStan (moteur de calcul de Prophet)
 5. Exécution de la suite de tests pytest (validation pré-entraînement)
-6. Réentraînement Prophet + push des prévisions en BDD
-7. Commit automatique des modèles .pkl mis à jour
+6. Agrégation schema_analytics → schema_ia (intègre les commandes saisies via l'API)
+7. Réentraînement Prophet + push des prévisions en BDD
+8. Commit automatique des modèles .pkl mis à jour
 ```
+
+> **Pourquoi l'étape 6 et pas le pipeline ETL complet ?** `charger_analytics()` vide les tables
+> (`TRUNCATE ... CASCADE`) avant de les recharger depuis les fichiers Excel. Exécuter `main.py`
+> en CI effacerait donc toutes les commandes enregistrées via l'API depuis le déploiement. Seule
+> l'agrégation est rejouée : elle lit `schema_analytics` — historique **et** nouvelles commandes —
+> et reconstruit les séries temporelles sans rien détruire.
 
 Les secrets de connexion à Supabase (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`) sont stockés dans GitHub Secrets — jamais en clair dans le code.
 
