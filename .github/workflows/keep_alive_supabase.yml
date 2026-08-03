@@ -1,0 +1,47 @@
+name: Keep-alive Supabase
+
+# Le plan gratuit Supabase met un projet en veille apres 7 jours sans activite.
+# Le reentrainement Prophet n'ayant lieu qu'une fois par mois, la base serait
+# systematiquement endormie au moment ou le workflow se declenche (incident du
+# 01/08/2026 : FATAL (ENOTFOUND) tenant/user not found).
+# Ce job maintient le projet actif avec une requete triviale tous les 4 jours.
+
+on:
+  schedule:
+    # jours 1, 5, 9, 13, 17, 21, 25, 29 -> ecart maximal de 3 jours
+    - cron: '0 6 */4 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+
+    env:
+      DB_HOST:     ${{ secrets.DB_HOST }}
+      DB_PORT:     ${{ secrets.DB_PORT }}
+      DB_NAME:     ${{ secrets.DB_NAME }}
+      DB_USER:     ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+    steps:
+      - name: Checkout du depot
+        uses: actions/checkout@v4
+
+      - name: Installation de Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installation des dependances minimales
+        run: pip install "sqlalchemy==2.0.36" "psycopg2-binary>=2.9.10" "python-dotenv==1.0.1"
+
+      - name: Ping Supabase
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+          from src.db import creer_moteur
+
+          with creer_moteur().connect() as conn:
+              conn.execute(text("SELECT 1"))
+          print("Supabase actif — projet maintenu hors veille.")
+          PY
