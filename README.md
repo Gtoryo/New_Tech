@@ -99,7 +99,7 @@ Le pipeline suit une architecture en couches étanches, inspirée du patron *Med
 | Visualisation | Plotly | ≥ 5.22 | Graphiques interactifs |
 | Authentification | bcrypt | 4.2.1 | Hachage des mots de passe |
 | Gestion secrets | python-dotenv | 1.0.1 | Variables d'environnement locales |
-| CI/CD | GitHub Actions | — | Réentraînement mensuel automatisé |
+| CI/CD | GitHub Actions | — | Réentraînement mensuel automatisé + keep-alive Supabase |
 | Tests | pytest | 8.3.5 | Tests unitaires (ETL, Prophet) et d'intégration (API) |
 
 ---
@@ -168,7 +168,8 @@ New_Tech/
 │
 └── .github/
     └── workflows/
-        └── retrain_prophet.yml # Workflow CI/CD — réentraînement mensuel
+        ├── retrain_prophet.yml     # Workflow CI/CD — réentraînement mensuel
+        └── keep_alive_supabase.yml # Ping tous les 4 jours — évite la mise en veille
 ```
 
 ---
@@ -392,11 +393,32 @@ Le workflow `.github/workflows/retrain_prophet.yml` s'exécute automatiquement *
 3. Installation des dépendances (requirements-train.txt)
 4. Installation de CmdStan (moteur de calcul de Prophet)
 5. Exécution de la suite de tests pytest (validation pré-entraînement)
-6. Réentraînement Prophet + push des prévisions en BDD
-7. Commit automatique des modèles .pkl mis à jour
+6. Agrégation schema_analytics → schema_ia (intègre les commandes saisies via l'API)
+7. Réentraînement Prophet + push des prévisions en BDD
+8. Commit automatique des modèles .pkl mis à jour
 ```
 
+> **Pourquoi l'étape 6 et pas le pipeline ETL complet ?** `charger_analytics()` vide les tables
+> (`TRUNCATE ... CASCADE`) avant de les recharger depuis les fichiers Excel. Exécuter `main.py`
+> en CI effacerait donc toutes les commandes enregistrées via l'API depuis le déploiement. Seule
+> l'agrégation est rejouée : elle lit `schema_analytics` — historique **et** nouvelles commandes —
+> et reconstruit les séries temporelles sans rien détruire.
+
 Les secrets de connexion à Supabase (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`) sont stockés dans GitHub Secrets — jamais en clair dans le code.
+
+### Second workflow — `keep_alive_supabase.yml`
+
+Le plan gratuit Supabase met un projet en veille après **7 jours sans activité**. Le réentraînement
+n'ayant lieu qu'une fois par mois, la base serait systématiquement endormie au moment où le workflow
+se déclenche — le job du 01/08/2026 a échoué ainsi, sur un `FATAL (ENOTFOUND) tenant/user not found`
+renvoyé par le pooler.
+
+`keep_alive_supabase.yml` exécute un `SELECT 1` **tous les 4 jours** (jours 1, 5, 9… du mois, soit un
+écart maximal de 3 jours). Le dashboard Streamlit et l'API Render, qui lisent la même base, en
+bénéficient également.
+
+> **Attention :** GitHub désactive les workflows planifiés après 60 jours sans activité dans le dépôt.
+> Passé ce délai, le keep-alive s'arrête et le projet Supabase repart en veille.
 
 ---
 

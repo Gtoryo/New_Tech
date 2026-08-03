@@ -43,6 +43,13 @@ jobs:
       - name: Tests automatisés (A1.3 C3 — validation modèle et pipeline ETL)
         run: pytest tests/ -v
 
+      # Rafraîchit schema_ia à partir de schema_analytics, qui contient
+      # l'historique chargé ET les commandes saisies via l'API depuis la
+      # dernière exécution. Sans cette étape, Prophet se réentraînerait
+      # chaque mois sur des séries identiques.
+      - name: Agrégation des séries temporelles (schema_analytics → schema_ia)
+        run: python src/aggregate.py
+
       - name: Réentraînement Prophet + sauvegarde prévisions en base
         run: python model/train.py
 
