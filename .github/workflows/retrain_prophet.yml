@@ -22,6 +22,10 @@ jobs:
     steps:
       - name: Checkout du dépôt
         uses: actions/checkout@v4
+        with:
+          # Historique complet : le rebase de l'etape 8 a besoin d'une base
+          # de fusion, indisponible dans le clone superficiel par defaut.
+          fetch-depth: 0
 
       - name: Installation de Python 3.11
         uses: actions/setup-python@v5
