@@ -45,38 +45,38 @@ def creer_commande(
     try:
         with engine.begin() as conn:
             # ── Upsert client (insensible à la casse) ────────────────────────
-            row = conn.execute(
-                text("SELECT id_client FROM schema_analytics.client WHERE LOWER(nom_client) = LOWER(:nom)"),
-                {"nom": commande.client},
-            ).fetchone()
-            if row:
-                id_client = row[0]
-            else:
-                id_client = conn.execute(
-                    text("""
-                        INSERT INTO schema_analytics.client (nom_client, telephone)
-                        VALUES (:nom, :tel)
-                        RETURNING id_client
-                    """),
-                    {"nom": commande.client, "tel": commande.telephone or None},
-                ).fetchone()[0]
+            # Un SELECT suivi d'un INSERT laisserait une fenêtre entre les deux
+            # requêtes : deux commandes concurrentes pour un client inconnu
+            # créeraient deux lignes. ON CONFLICT rend l'opération atomique, en
+            # s'appuyant sur l'index unique ux_client_nom_lower.
+            # La casse enregistrée n'est pas écrasée : la première forme vue est
+            # conservée, comme dans src/transform.py. Seul le téléphone est mis
+            # à jour, et uniquement si la saisie en fournit un.
+            id_client = conn.execute(
+                text("""
+                    INSERT INTO schema_analytics.client AS c (nom_client, telephone)
+                    VALUES (:nom, :tel)
+                    ON CONFLICT (LOWER(nom_client)) DO UPDATE
+                        SET telephone = COALESCE(EXCLUDED.telephone, c.telephone)
+                    RETURNING c.id_client
+                """),
+                {"nom": commande.client, "tel": commande.telephone or None},
+            ).fetchone()[0]
 
             # ── Upsert employé ────────────────────────────────────────────────
-            row = conn.execute(
-                text("SELECT id_employe FROM schema_analytics.employe WHERE LOWER(nom_employe) = LOWER(:nom)"),
+            # DO UPDATE plutôt que DO NOTHING : ce dernier ne renvoie aucune
+            # ligne en cas de conflit, donc RETURNING serait vide. La mise à
+            # jour est volontairement neutre.
+            id_employe = conn.execute(
+                text("""
+                    INSERT INTO schema_analytics.employe AS e (nom_employe)
+                    VALUES (:nom)
+                    ON CONFLICT (LOWER(nom_employe)) DO UPDATE
+                        SET nom_employe = e.nom_employe
+                    RETURNING e.id_employe
+                """),
                 {"nom": commande.employe},
-            ).fetchone()
-            if row:
-                id_employe = row[0]
-            else:
-                id_employe = conn.execute(
-                    text("""
-                        INSERT INTO schema_analytics.employe (nom_employe)
-                        VALUES (:nom)
-                        RETURNING id_employe
-                    """),
-                    {"nom": commande.employe},
-                ).fetchone()[0]
+            ).fetchone()[0]
 
             # ── Résolution du service ─────────────────────────────────────────
             row = conn.execute(

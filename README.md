@@ -379,6 +379,8 @@ uvicorn api.main:app --reload
 
 - **Authentification** : l'endpoint d'écriture exige une clé secrète dans l'en-tête `X-API-Key`, vérifiée **en temps constant** (`secrets.compare_digest`) contre la variable d'environnement `API_SECRET_KEY` — clé stockée dans les variables Render côté serveur et les secrets Streamlit côté client.
 - **CORS** : origines restreintes à l'URL Streamlit Cloud de production, méthodes limitées à GET/POST.
+- **Messages d'erreur non divulgants** : aucun détail technique n'est renvoyé au client. Les exceptions de la couche d'accès aux données sont journalisées côté serveur via `logger.exception` et la réponse HTTP ne contient qu'un message générique — un message SQLAlchemy brut exposerait sinon le schéma, les tables, la requête émise et parfois l'hôte de la base (OWASP API8:2023 — Security Misconfiguration).
+- **Écritures atomiques** : l'enregistrement d'une commande s'exécute dans une transaction unique (`engine.begin()`), et les upserts client/employé s'appuient sur `INSERT … ON CONFLICT … RETURNING` adossé aux index uniques `ux_client_nom_lower` et `ux_employe_nom_lower`. Deux saisies concurrentes pour un même client inconnu ne peuvent donc pas créer de doublon.
 
 ---
 
