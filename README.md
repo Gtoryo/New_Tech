@@ -462,19 +462,29 @@ bénéficient également.
 ## 13. Tests automatisés
 
 ```bash
-# Lancer la suite complète
+# Suite sans infrastructure — 65 tests, les 16 tests d'intégration sont ignorés
 pytest tests/ -v
 
-# Résultats attendus : 65 tests (35 ETL + 16 API + 14 Prophet)
+# Suite complète — 81 tests, avec un PostgreSQL jetable
+docker run -d --name pg-test -p 55432:5432 \
+    -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=newtech_test postgres:16
+
+NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=55432 DB_USER=test \
+DB_PASSWORD=test DB_NAME=newtech_test DB_SSLMODE=disable pytest tests/ -v
 ```
 
 | Fichier | Tests | Ce qui est vérifié |
 |---|---|---|
-| `tests/test_transform.py` | 34 | `parser_date` (4 formats), `normaliser_service` (7 variantes), `normaliser_ville`, `transformer_ventes` (doublons, totaux recalculés), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
-| `tests/test_api.py` | 16 | **Tests d'intégration** — routage, authentification `X-API-Key` (401 sur clé absente ou invalide), validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base de données |
-| `tests/test_model.py` | 11 | `slugify`, entraînement Prophet end-to-end, colonnes de sortie, horizon de prévision 180 jours |
+| `tests/test_transform.py` | 35 | `parser_date` (4 formats), `normaliser_service`, `normaliser_ville`, `transformer_ventes` (doublons, recalcul des trois formes de montant non calculé), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
+| `tests/test_api.py` | 16 | **Intégration API** — routage, authentification `X-API-Key` (401 sur clé absente ou invalide), validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base |
+| `tests/test_model.py` | 14 | `slugify`, entraînement Prophet end-to-end, colonnes de sortie, horizon 180 jours, écrêtage à zéro des prévisions négatives |
+| `tests/test_integration_pipeline.py` | 16 | **Intégration ETL sur PostgreSQL** — intégrité référentielle après résolution des clés étrangères, préservation des anomalies dans `schema_brut`, idempotence du rechargement et de l'agrégation, conservation du chiffre d'affaires entre `schema_analytics` et `schema_ia`, `COUNT(DISTINCT)` sur les factures |
 
-**Couverture mesurée** (`pytest --cov`) : `src/transform.py` à **98 %** — module qui concentre toute la logique de qualité des données — et `api/auth.py`, `api/schemas.py`, `api/main.py` à **100 %**. Les modules exigeant une connexion à Supabase (`extract`, `load`, `aggregate`, `db`) ne sont pas couverts en test unitaire : leur validation relèverait d'un test de round-trip ETL sur une base PostgreSQL dédiée, identifié en perspective d'évolution.
+**Couverture mesurée** (`pytest --cov`) : **99 %** sur `src/` — `extract`, `load` et `db` à 100 %, `aggregate` à 97 %, `transform` à 99 % — et **66 %** sur `api/`, dont 100 % sur `auth`, `schemas` et `main`.
+
+Les couches Extract, Load et Aggregate écrivent toutes en base : leur comportement réel — résolution des clés étrangères, respect des contraintes d'intégrité, idempotence du `TRUNCATE + INSERT`, exactitude des requêtes d'agrégation — ne peut se vérifier que face à un vrai moteur. Elles sont donc testées contre un PostgreSQL éphémère plutôt qu'émulées : un conteneur coûte moins cher qu'une couche d'abstraction, et teste le moteur réellement utilisé en production.
+
+> **Garde-fous.** Ces tests exécutent des `TRUNCATE`. Ils sont ignorés tant que `NEWTECH_INTEGRATION=1` n'est pas positionné, et refusent de s'exécuter si `DB_HOST` désigne un hôte hébergé ou si `DB_NAME` ne contient pas « test ».
 
 `conftest.py` à la racine ajoute le projet au `sys.path` pour que les imports fonctionnent sans installation en mode développement.
 
