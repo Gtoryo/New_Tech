@@ -83,3 +83,12 @@ jobs:
 
           echo "::error::Impossible de pousser les modèles après 3 tentatives."
           exit 1
+
+      # Placé après le commit, volontairement : les prévisions sont déjà en
+      # base et les modèles versionnés, dépôt et base restent donc cohérents.
+      # Cette étape ne bloque pas la publication, elle la qualifie — sur une
+      # PME, mieux vaut des prévisions dégradées et signalées que pas de
+      # prévisions du tout. Un échec ici passe le run au rouge et déclenche la
+      # notification GitHub, ce qui appelle une inspection humaine.
+      - name: Surveillance de la dérive du modèle (A1.3 C4)
+        run: python model/monitor.py
