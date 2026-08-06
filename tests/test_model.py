@@ -6,7 +6,7 @@ Aucune connexion base de données requise.
 
 import pytest
 import pandas as pd
-from model.train import _slugify, _entrainer_prophet
+from model.train import _slugify, _entrainer_prophet, _preparer_previsions
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,3 +74,35 @@ class TestEntrainementProphet:
         futur = modele.make_future_dataframe(periods=30, freq="D")
         previsions = modele.predict(futur)
         assert (previsions["yhat_upper"] >= previsions["yhat_lower"]).all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _preparer_previsions — écrêtage à zéro et format de sortie
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPreparerPrevisions:
+
+    @pytest.fixture
+    def serie_declinante(self):
+        # Tendance fortement décroissante : extrapolée à 180 jours, Prophet
+        # descend largement sous zéro. C'est le cas que l'écrêtage doit couvrir.
+        dates = pd.date_range("2023-01-01", periods=120, freq="D")
+        return pd.DataFrame({"ds": dates, "y": range(600, 0, -5)})
+
+    def test_previsions_jamais_negatives(self, serie_declinante):
+        modele = _entrainer_prophet(serie_declinante, "declin")
+        df = _preparer_previsions(modele, "test", horizon=180)
+        for colonne in ("yhat", "yhat_lower", "yhat_upper"):
+            assert (df[colonne] >= 0).all(), f"{colonne} contient des valeurs négatives"
+
+    def test_format_de_sortie(self, serie_declinante):
+        modele = _entrainer_prophet(serie_declinante, "declin")
+        df = _preparer_previsions(modele, "Sérigraphie", horizon=180)
+        assert list(df.columns) == ["service", "ds", "yhat", "yhat_lower", "yhat_upper"]
+        assert (df["service"] == "Sérigraphie").all()
+
+    def test_horizon_et_dates_futures_uniquement(self, serie_declinante):
+        modele = _entrainer_prophet(serie_declinante, "declin")
+        df = _preparer_previsions(modele, "test", horizon=180)
+        assert len(df) == 180                                    # horizon respecté
+        assert min(df["ds"]) > modele.history["ds"].max().date()  # aucun historique reprojeté

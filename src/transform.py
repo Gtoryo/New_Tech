@@ -42,7 +42,13 @@ _MAP_SERVICE = {
 
 # Variantes connues de "Pointe-Noire" à normaliser
 _VARIANTES_PN = {"pointe noire", "pn", "pte-noire", "pointenoire",
-                 "pointe-noire", "p.noire", "pointe-noire"}
+                 "pointe-noire", "p.noire"}
+
+# Valeurs de saisie signifiant « montant non calculé » plutôt qu'un montant
+# réellement nul. Le zéro est la forme présente dans le jeu de travail
+# (121 lignes) ; 999 est une seconde convention relevée lors du cadrage,
+# conservée par sécurité si elle réapparaissait en source.
+_SENTINELLES_TOTAL = {0, 999}
 
 
 def _parser_date(valeur) -> datetime | None:
@@ -145,16 +151,14 @@ def transformer_ventes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     print(f"  Doublons supprimés                         : {n_avant - len(df)}")
 
     # ── ÉTAPE 5 : Recalcul du Total quand incohérent ─────────────────────────
-    # Les valeurs 0, 999 ou NaN dans Total sont remplacées par Quantite × Prix
+    # Les sentinelles de saisie et les valeurs absentes sont remplacées par
+    # Quantite × Prix. Supprimer ces lignes appauvrirait l'historique : la
+    # commande a bien eu lieu, seul son montant n'a pas été calculé.
     df["Prix_Unitaire"] = pd.to_numeric(df["Prix_Unitaire"], errors="coerce")
     df["Quantite"]      = pd.to_numeric(df["Quantite"],      errors="coerce")
     df["Total"]         = pd.to_numeric(df["Total"],          errors="coerce")
 
-    masque_incoherent = (
-        df["Total"].isna() |
-        (df["Total"] == 0)  |
-        (df["Total"] == 999)
-    )
+    masque_incoherent = df["Total"].isna() | df["Total"].isin(_SENTINELLES_TOTAL)
     df.loc[masque_incoherent, "Total"] = (
         df.loc[masque_incoherent, "Quantite"] *
         df.loc[masque_incoherent, "Prix_Unitaire"]

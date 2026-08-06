@@ -147,6 +147,26 @@ class TestTransformerVentes:
         for col in ["facture_id", "quantite", "prix_unitaire", "total_ligne"]:
             assert col in result["lignes"].columns
 
+    def test_totaux_sentinelles_recalcules(self):
+        # Les trois formes de montant non calculé (sentinelle 0, sentinelle 999,
+        # valeur absente) sont remplacées par Quantite x Prix_Unitaire.
+        df = pd.DataFrame({
+            "Date":              ["15/06/2024", "16/06/2024", "17/06/2024", "18/06/2024"],
+            "Client":            ["A",          "B",          "C",          "D"],
+            "Telephone":         ["01",         "02",         "03",         "04"],
+            "Service_Type":      ["imprimerie"] * 4,
+            "Employe_En_Charge": ["Alice"] * 4,
+            "Facture_ID":        ["F1",         "F2",         "F3",         "F4"],
+            "Prix_Unitaire":     [5000,         3000,         2000,         1500],
+            "Quantite":          [2,            4,            3,            6],
+            "Total":             [0,            999,          None,         9000],
+            "Statut_Paiement":   ["Payé"] * 4,
+            "Description":       ["x"] * 4,
+        })
+        totaux = transformer_ventes(df)["lignes"]["total_ligne"].tolist()
+        # Les 3 premiers sont recalculés, le 4e (déjà cohérent) est conservé
+        assert totaux == [10000.0, 12000.0, 6000.0, 9000.0]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # transformer_depenses
