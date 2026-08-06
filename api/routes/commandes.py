@@ -5,6 +5,7 @@ Concentre la logique métier de la saisie côté serveur : upsert client,
 upsert employé, résolution du service, insertion facture + ligne_facture.
 """
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,6 +14,8 @@ from sqlalchemy import text
 from api.auth import verifier_cle_api
 from api.database import get_engine
 from api.schemas import CommandeIn, CommandeOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/commandes", tags=["Commandes"])
 
@@ -123,9 +126,13 @@ def creer_commande(
     except HTTPException:
         raise
     except Exception as exc:
+        # Le détail technique part dans les logs serveur, jamais dans la réponse
+        # HTTP : un message SQLAlchemy expose le schéma, les tables, la requête
+        # et parfois l'hôte de la base (OWASP API8:2023 — Security Misconfiguration).
+        logger.exception("Echec d'enregistrement de la commande %s", facture_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur base de données : {exc}",
+            detail="Enregistrement impossible. L'incident a été journalisé.",
         ) from exc
 
     return CommandeOut(facture_id=facture_id, total=total)

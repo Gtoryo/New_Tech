@@ -3,11 +3,15 @@ kpis.py — Endpoint GET /api/v1/kpis/
 Agrège les indicateurs clés via SQL direct depuis schema_ia.
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import text
 
 from api.database import get_engine
 from api.schemas import KpiOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kpis", tags=["KPIs"])
 
@@ -42,9 +46,11 @@ def obtenir_kpis() -> KpiOut:
             """)).fetchone()
 
     except Exception as exc:
+        # Détail technique en logs uniquement (cf. commentaire dans commandes.py)
+        logger.exception("Echec de calcul des KPIs")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Impossible d'accéder à la base de données : {exc}",
+            detail="Base de données momentanément indisponible. Réessayez dans quelques instants.",
         ) from exc
 
     if not row_global or row_global["ca_total"] is None:

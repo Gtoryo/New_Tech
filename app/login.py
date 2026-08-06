@@ -6,26 +6,32 @@ Formulaire sécurisé : vérification bcrypt contre les secrets Streamlit.
 import bcrypt
 import streamlit as st
 
+# Hash leurre, de même facteur de coût que les hash réels (12). Il sert à
+# vérifier un mot de passe même lorsque l'identifiant n'existe pas, afin que
+# les deux cas consomment le même temps CPU. Sans lui, un retour anticipé sur
+# identifiant inconnu répondrait en microsecondes là où un identifiant valide
+# demande ~250 ms : l'écart suffit à énumérer les comptes au chronomètre.
+_HASH_LEURRE = bcrypt.hashpw(b"leurre", bcrypt.gensalt(rounds=12))
+
 
 def _verifier_credentials(identifiant: str, mot_de_passe: str) -> dict | None:
     """
     Cherche l'identifiant dans st.secrets["users"].
     Retourne {"role": ..., "identifiant": ...} si le mot de passe est correct,
-    None sinon.
+    None sinon — sans laisser deviner lequel des deux champs est erroné.
     """
     utilisateurs = st.secrets.get("users", {})
+    infos        = utilisateurs.get(identifiant)
 
-    if identifiant not in utilisateurs:
-        return None  # identifiant inconnu
+    # Le hash vérifié est celui de l'utilisateur s'il existe, le leurre sinon :
+    # bcrypt s'exécute dans les deux cas, pour une durée équivalente.
+    hash_a_verifier = infos["hash"].encode("utf-8") if infos else _HASH_LEURRE
+    mot_de_passe_ok = bcrypt.checkpw(mot_de_passe.encode("utf-8"), hash_a_verifier)
 
-    infos        = utilisateurs[identifiant]
-    hash_stocke  = infos["hash"].encode("utf-8")
-    mdp_encode   = mot_de_passe.encode("utf-8")
-
-    if bcrypt.checkpw(mdp_encode, hash_stocke):
+    if infos and mot_de_passe_ok:
         return {"role": infos["role"], "identifiant": identifiant}
 
-    return None  # mot de passe incorrect
+    return None  # identifiant inconnu ou mot de passe incorrect
 
 
 def afficher_login() -> None:
