@@ -35,10 +35,15 @@ def obtenir_previsions(
     engine = get_engine()
     with engine.connect() as conn:
         result = conn.execute(
+            # Le filtre sur CURRENT_DATE est indispensable : les prévisions sont
+            # calculées au réentraînement mensuel et couvrent 180 jours à partir
+            # de cette date. Sans lui, LIMIT renverrait les plus anciennes, donc
+            # jusqu'à 30 jours de « prévisions » déjà passées en fin de cycle.
             text("""
                 SELECT ds, yhat, yhat_lower, yhat_upper
                 FROM schema_ia.previsions_prophet
                 WHERE service = :service
+                  AND ds >= CURRENT_DATE
                 ORDER BY ds
                 LIMIT :horizon
             """),
