@@ -10,6 +10,7 @@ import pickle
 import warnings
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from prophet import Prophet
 from prophet.diagnostics import cross_validation, performance_metrics
@@ -17,6 +18,12 @@ from prophet.diagnostics import cross_validation, performance_metrics
 warnings.filterwarnings("ignore")
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+
+# Graine fixe : Prophet échantillonne les bornes d'intervalle via le RNG global
+# de numpy. Sans elle, le coverage varie d'un à deux points d'une exécution à
+# l'autre et les chiffres publiés dans le rapport ne seraient pas reproductibles.
+# Même valeur que model/train.py.
+SEED = 42
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +58,8 @@ def metriques_par_horizon(modele: Prophet, label: str) -> pd.DataFrame:
       horizon = 90  jours   (fenêtre d'évaluation)
     """
     print(f"\n  Cross-validation [{label}] en cours...", end=" ", flush=True)
-    
+
+    np.random.seed(SEED)   # coverage reproductible d'une exécution à l'autre
     df_cv = cross_validation(
         modele,
         initial="365 days", # période d'entraînement initiale minimale
@@ -98,6 +106,7 @@ def metriques_agregees(modele: Prophet, label: str) -> pd.DataFrame:
     """
     print(f"\n  Agrégation temporelle [{label}] en cours...", end=" ", flush=True)
 
+    np.random.seed(SEED)
     df_cv = cross_validation(
         modele,
         initial="365 days",
@@ -133,7 +142,80 @@ def metriques_agregees(modele: Prophet, label: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. COMPARAISON changepoint_prior_scale
+# 3. COMPARAISON À DES PRÉVISIONS DE RÉFÉRENCE (MASE)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
+    """
+    Compare Prophet à deux prévisions de référence sur les mêmes points de coupure.
+
+    Un MAPE lu isolément ne dit rien de la valeur ajoutée d'un modèle : sur une
+    série à forte dispersion, toute méthode affiche un pourcentage élevé. La
+    référence méthodologique (Hyndman & Koehler, 2006) consiste à rapporter
+    l'erreur du modèle à celle d'une prévision naïve — c'est le MASE.
+
+    Deux références sont évaluées sur les mêmes cutoffs et horizons que la
+    cross-validation, donc à information strictement égale :
+      - naïf saisonnier : rejoue la valeur du même jour de la semaine
+        précédente (J-7), en remontant de semaine en semaine si la date est
+        absente de la série (le pôle ferme certains jours) ;
+      - moyenne historique : moyenne de tout l'historique disponible au cutoff.
+
+    Un MASE inférieur à 1 établit que le modèle capture une structure que la
+    prévision naïve ne reproduit pas.
+    """
+    print(f"\n  Comparaison aux références [{label}] en cours...", end=" ", flush=True)
+
+    np.random.seed(SEED)
+    df_cv = cross_validation(
+        modele,
+        initial="365 days",
+        period="30 days",
+        horizon="90 days",
+        parallel=None,
+    )
+    print("OK")
+
+    historique = modele.history.set_index("ds")["y"]
+
+    def _naif_saisonnier(date) -> float:
+        """Valeur du même jour de la semaine précédente, à défaut J-14, J-21, J-28."""
+        for recul in (7, 14, 21, 28):
+            valeur = historique.get(date - pd.Timedelta(days=recul))
+            if valeur is not None and not pd.isna(valeur):
+                return valeur
+        return np.nan
+
+    df_cv["naif"] = df_cv["ds"].apply(_naif_saisonnier)
+
+    # Moyenne calculée une fois par cutoff plutôt qu'une fois par ligne
+    moyennes = {c: historique[historique.index <= c].mean()
+                for c in df_cv["cutoff"].unique()}
+    df_cv["moyenne"] = df_cv["cutoff"].map(moyennes)
+
+    # Les premières dates de la série n'ont pas d'antécédent à J-7 : on les
+    # écarte pour que les trois méthodes soient comparées sur les mêmes points.
+    df_cv = df_cv.dropna(subset=["naif"])
+
+    mae_naif = (df_cv["y"] - df_cv["naif"]).abs().mean()
+
+    lignes = []
+    for nom, colonne in (("Prophet",                "yhat"),
+                         ("Naïf saisonnier (J-7)",  "naif"),
+                         ("Moyenne historique",     "moyenne")):
+        erreur_abs = (df_cv["y"] - df_cv[colonne]).abs()
+        lignes.append({
+            "Modèle":     nom,
+            "MAE (FCFA)": int(erreur_abs.mean().round(0)),
+            "MAPE (%)":   round((erreur_abs / df_cv["y"]).mean() * 100, 1),
+            "MASE":       round(erreur_abs.mean() / mae_naif, 3),
+        })
+
+    return pd.DataFrame(lignes)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. COMPARAISON changepoint_prior_scale
 # ─────────────────────────────────────────────────────────────────────────────
 
 def comparer_changepoint(modele_ref: Prophet) -> pd.DataFrame:
@@ -208,7 +290,12 @@ if __name__ == "__main__":
     df_agg = metriques_agregees(modele_global, "global")
     _afficher_df(df_agg)
 
-    # ── Tableau 3 : comparaison changepoint_prior_scale ──────────────────────
+    # ── Tableau 3 : comparaison aux prévisions de référence ──────────────────
+    _afficher_titre("COMPARAISON AUX PRÉVISIONS DE RÉFÉRENCE (MASE) — modèle global")
+    df_base = metriques_vs_baselines(modele_global, "global")
+    _afficher_df(df_base)
+
+    # ── Tableau 4 : comparaison changepoint_prior_scale ──────────────────────
     _afficher_titre("COMPARAISON changepoint_prior_scale")
     print("  Réentraînement de 3 variantes en cours (peut prendre 2-3 min)...\n")
     df_cp = comparer_changepoint(modele_global)

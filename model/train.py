@@ -88,15 +88,18 @@ def _sauvegarder(modele: Prophet, chemin: Path) -> None:
     logger.info("Sauvegarde -> %s", chemin.relative_to(chemin.parent.parent))
 
 
-def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180) -> None:
+def _preparer_previsions(modele: Prophet, service: str, horizon: int = 180) -> pd.DataFrame:
     """
-    Génère les prévisions sur `horizon` jours et les stocke dans
-    schema_ia.previsions_prophet.
-    Les anciennes prévisions du service sont supprimées avant insertion
-    pour garantir l'idempotence (ré-exécutable sans créer de doublons).
-    """
-    moteur = creer_moteur()
+    Génère les prévisions futures et les met au format de la table cible.
 
+    Fonction pure : aucune écriture en base, ce qui la rend testable sans
+    infrastructure. Seules les dates postérieures à la dernière observation
+    sont conservées — l'historique n'est pas reprojeté.
+
+    Un chiffre d'affaires ne pouvant pas être négatif, les trois colonnes de
+    prévision sont écrêtées à zéro : Prophet produit des valeurs légèrement
+    négatives en bas de cycle, notamment sur les pôles à faible activité.
+    """
     # Reproductibilité des bornes d'intervalle (échantillonnage numpy).
     np.random.seed(SEED)
     futur      = modele.make_future_dataframe(periods=horizon, freq="D")
@@ -108,19 +111,33 @@ def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180
         ["ds", "yhat", "yhat_lower", "yhat_upper"]
     ].copy()
 
-    df["yhat"]       = np.maximum(df["yhat"],       0).round(0).astype(int)
-    df["yhat_lower"] = np.maximum(df["yhat_lower"], 0).round(0).astype(int)
-    df["yhat_upper"] = np.maximum(df["yhat_upper"], 0).round(0).astype(int)
-    df["service"]    = service
-    df["ds"]         = df["ds"].dt.date
+    for colonne in ("yhat", "yhat_lower", "yhat_upper"):
+        df[colonne] = np.maximum(df[colonne], 0).round(0).astype(int)
+    df["service"] = service
+    df["ds"]      = df["ds"].dt.date
+
+    return df[["service", "ds", "yhat", "yhat_lower", "yhat_upper"]]
+
+
+def _sauvegarder_previsions_db(modele: Prophet, service: str, horizon: int = 180) -> None:
+    """
+    Écrit les prévisions dans schema_ia.previsions_prophet.
+    Les anciennes prévisions du service sont supprimées avant insertion
+    pour garantir l'idempotence (ré-exécutable sans créer de doublons).
+    """
+    df     = _preparer_previsions(modele, service, horizon)
+    moteur = creer_moteur()
 
     with moteur.begin() as conn:
         conn.execute(
             text("DELETE FROM schema_ia.previsions_prophet WHERE service = :s"),
             {"s": service},
         )
-        df[["service", "ds", "yhat", "yhat_lower", "yhat_upper"]].to_sql(
-            "previsions_prophet", moteur,
+        # `conn` et non `moteur` : passer le moteur ferait emprunter une
+        # seconde connexion au pool, donc une transaction distincte — le
+        # DELETE et l'INSERT ne seraient plus atomiques.
+        df.to_sql(
+            "previsions_prophet", conn,
             schema="schema_ia", if_exists="append", index=False, method="multi",
         )
 
