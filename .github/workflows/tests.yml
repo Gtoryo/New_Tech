@@ -1,0 +1,78 @@
+name: Tests
+
+# Le réentraînement mensuel valide le code avant d'écrire en base, mais une
+# régression poussée le 3 du mois ne serait détectée que le 1er du suivant.
+# Ce workflow ramène ce délai à quelques minutes : la suite complète tourne à
+# chaque push et à chaque pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    # PostgreSQL éphémère pour les tests d'intégration du pipeline ETL.
+    # Les couches Extract, Load et Aggregate écrivent toutes en base : leur
+    # comportement réel — résolution des clés étrangères, intégrité
+    # référentielle, idempotence du TRUNCATE + INSERT, exactitude des requêtes
+    # d'agrégation — ne peut se vérifier que face au moteur réellement utilisé.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: newtech_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Base jetable du service ci-dessus. Aucun secret : ce workflow ne touche
+      # jamais la base de production, et les tests d'intégration refusent de
+      # s'exécuter si DB_HOST désigne un hôte hébergé.
+      NEWTECH_INTEGRATION: '1'
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: test
+      DB_PASSWORD: test
+      DB_NAME: newtech_test
+      DB_SSLMODE: disable
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Installation de Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Installation des dépendances
+        run: pip install -r requirements-train.txt pytest-cov
+
+      - name: Installation de CmdStan (moteur de calcul Prophet)
+        run: |
+          python -c "import cmdstanpy; cmdstanpy.install_cmdstan(overwrite=True)"
+          python -c "
+          import pathlib, shutil, prophet
+          for p in (pathlib.Path(prophet.__file__).parent / 'stan_model').glob('cmdstan-*'):
+              shutil.rmtree(p, ignore_errors=True)
+          "
+
+      - name: Suite complète (unitaires, API, IA, intégration ETL)
+        run: pytest tests/ -v
+
+      - name: Couverture du pipeline de données
+        run: pytest tests/test_transform.py tests/test_integration_pipeline.py --cov=src --cov-report=term-missing
+
+      - name: Couverture de l'API
+        run: pytest tests/test_api.py --cov=api --cov-report=term-missing

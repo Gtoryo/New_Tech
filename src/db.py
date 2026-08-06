@@ -21,12 +21,20 @@ load_dotenv(ROOT / "variable.env")
 
 
 def build_db_url() -> str:
-    """Construit l'URL de connexion PostgreSQL/Supabase depuis l'environnement."""
+    """
+    Construit l'URL de connexion PostgreSQL/Supabase depuis l'environnement.
+
+    DB_SSLMODE vaut « require » par défaut : le chiffrement en transit reste
+    donc exigé partout où la variable n'est pas définie, c'est-à-dire en
+    production. Les tests d'intégration la positionnent à « disable » pour
+    joindre un PostgreSQL éphémère, qui n'expose pas de certificat.
+    """
     return (
         f"postgresql+psycopg2://"
         f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD', '').strip()}"
         f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}"
-        f"/{os.getenv('DB_NAME')}?sslmode=require"
+        f"/{os.getenv('DB_NAME')}"
+        f"?sslmode={os.getenv('DB_SSLMODE', 'require')}"
     )
 
 

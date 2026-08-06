@@ -144,6 +144,14 @@ def transformer_ventes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     df = df.dropna(subset=["date_facture", "Client"])
     print(f"  Lignes supprimées (date ou client manquant) : {n_initial - len(df)}")
 
+    # L'employé, lui, n'est pas obligatoire. Une facture sans employé assigné
+    # reste exploitable : la commande a eu lieu et son chiffre d'affaires
+    # compte. Elle est donc conservée, et son lien vers employe restera NULL —
+    # ce que le schéma autorise. On le compte ici plutôt que de le laisser
+    # apparaître en aval comme une clé étrangère non résolue.
+    sans_employe = df["Employe_En_Charge"].isna().sum()
+    print(f"  Factures sans employé assigné (id_employe NULL) : {sans_employe}")
+
     # ── ÉTAPE 4 : Dédoublonnage sur Facture_ID ───────────────────────────────
     # On garde la première occurrence de chaque facture (doublons Excel ~5%)
     n_avant = len(df)
