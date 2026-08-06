@@ -257,6 +257,27 @@ DB_PASSWORD=votre_mot_de_passe
 
 ## 7. Utilisation du pipeline ETL
 
+### Jeu de travail et reproductibilité
+
+L'historique commercial réel de l'entreprise n'a pas pu quitter le poste de la Gestionnaire : sa sortie n'était pas autorisée. Le projet travaille donc sur un **jeu de données synthétique**, produit par un générateur paramétré à partir des particularités relevées lors du cadrage métier — formats de dates hétérogènes, fautes de frappe sur les libellés de service, doublons de factures, montants sentinelles et négatifs, variantes orthographiques de noms de villes.
+
+Les trois classeurs sont versionnés dans `data/`, ainsi que le générateur qui les produit. Les graines aléatoires étant fixes, une régénération reproduit les mêmes fichiers :
+
+```bash
+# Régénère data/*.xlsx à l'identique (à lancer depuis la racine du projet)
+python generated_data/generate_data.py
+```
+
+| Fichier | Lignes | Anomalies injectées |
+|---|---:|---|
+| `ventes_historiques.xlsx` | 3 001 | 142 doublons `Facture_ID` (4,7 %), 121 montants sentinelles à 0, 4 formats de date, 16 variantes de libellés de service |
+| `depenses_et_achats.xlsx` | 401 | 8 montants négatifs, 8 lignes vides |
+| `suivi_clients_prospects.xlsx` | 47 | 6 variantes orthographiques de « Pointe-Noire », doublons en casse mixte |
+
+> Les volumes, saisonnalités et gammes de prix sont calibrés sur l'activité du pôle Imprimerie & Sérigraphie telle qu'observée pendant le stage. Les taux d'anomalies ci-dessus sont ceux du jeu livré, mesurables directement sur les fichiers.
+
+### Exécution
+
 Le pipeline complet (Extract → Transform → Load → Aggregate) s'exécute via :
 
 ```bash
@@ -442,7 +463,7 @@ bénéficient également.
 # Lancer la suite complète
 pytest tests/ -v
 
-# Résultats attendus : 61 tests (34 ETL + 16 API + 11 Prophet)
+# Résultats attendus : 65 tests (35 ETL + 16 API + 14 Prophet)
 ```
 
 | Fichier | Tests | Ce qui est vérifié |

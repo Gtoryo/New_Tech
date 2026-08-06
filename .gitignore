@@ -7,8 +7,11 @@ variable.env
 .streamlit/secrets.toml
 generer_hash.py
 
-# Données sources (non versionnées)
-data/
+# Jeu de travail synthétique : VERSIONNÉ volontairement.
+# Il ne contient aucune donnée réelle de l'entreprise (l'historique commercial
+# n'a pas pu quitter le poste de la Gestionnaire). Le versionner permet de
+# rejouer l'intégralité du pipeline ETL et de vérifier les taux d'anomalies
+# annoncés dans le rapport. Voir generated_data/generate_data.py.
 
 # Cache Python
 __pycache__/
@@ -23,8 +26,6 @@ build/
 # Notes de travail internes (non versionnées)
 info_projet/conseil.md
 info_projet/role.md
-
-*generated_data
 
 # Rédaction du rapport (gérée hors dépôt)
 Redaction/
