@@ -57,7 +57,7 @@ jobs:
           cache: pip
 
       - name: Installation des dépendances
-        run: pip install -r requirements-train.txt pytest-cov
+        run: pip install -r requirements-train.txt
 
       - name: Installation de CmdStan (moteur de calcul Prophet)
         run: |

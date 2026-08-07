@@ -1,4 +1,9 @@
 pandas==2.2.3
+numpy>=1.26.0
+# Requis par pandas.read_excel() dans src/extract.py : pandas ne l'installe pas
+# lui-meme, c'est une dependance optionnelle. Sans elle, le pipeline ETL echoue
+# a la premiere lecture de classeur avec « Missing optional dependency ».
+openpyxl>=3.1.0
 sqlalchemy==2.0.36
 psycopg2-binary>=2.9.10
 python-dotenv==1.0.1
