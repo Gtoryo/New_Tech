@@ -326,11 +326,29 @@ Chaque modèle est sérialisé dans `models/*.pkl` et ses prévisions sur **180 
 python model/evaluate.py
 ```
 
-`model/evaluate.py` exécute une cross-validation à fenêtre croissante (`initial=365j`, `period=30j`, `horizon=90j`) sur le modèle global et produit trois tableaux :
+`model/evaluate.py` exécute une cross-validation à fenêtre croissante (`initial=365j`, `period=30j`, `horizon=90j`) sur le modèle global et produit quatre tableaux :
 
 1. **MAE / MAPE / Coverage par horizon** (30, 60 et 90 jours) ;
-2. **Erreur selon la granularité de décision** — l'erreur est recalculée après agrégation des prévisions au jour, à la semaine et au mois. Le MAPE journalier, élevé du fait de la nature intermittente de la série (nombreux jours à faible chiffre d'affaires), chute fortement une fois les prévisions agrégées : c'est à l'échelle hebdomadaire et mensuelle, celle à laquelle les réapprovisionnements sont décidés, que la prévision est réellement exploitable ;
-3. **Comparaison de `changepoint_prior_scale`** (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
+2. **Erreur selon la granularité de décision** — l'erreur est recalculée après agrégation des prévisions au jour, à la semaine et au mois. Le MAPE journalier, élevé du fait de la forte dispersion de la série, chute fortement une fois les prévisions agrégées : c'est à l'échelle hebdomadaire et mensuelle, celle à laquelle les réapprovisionnements sont décidés, que la prévision est réellement exploitable ;
+3. **Comparaison à des prévisions de référence (MASE)** — Prophet est confronté à un naïf saisonnier (J-7) et à la moyenne historique glissante, sur les mêmes points de coupure. Un MAPE lu isolément ne dit rien de la valeur ajoutée d'un modèle ; un MASE inférieur à 1 établit qu'il capture une structure que la prévision naïve ne reproduit pas ;
+4. **Comparaison de `changepoint_prior_scale`** (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
+
+### Reproduire les métriques publiées dans le rapport
+
+Les modèles sont réentraînés le 1er de chaque mois par GitHub Actions : les métriques évoluent avec eux, ce qui est le comportement attendu d'un système en production. Les valeurs citées dans le rapport de stage sont donc **ancrées à une version de modèle**, identifiée par un tag Git.
+
+```bash
+# Restaure les modèles sur lesquels les métriques du rapport ont été mesurées
+git checkout metriques-rapport-v1 -- models/
+
+python model/evaluate.py    # sections 4.3 du rapport
+python model/monitor.py     # section 5.2 du rapport
+
+# Revenir aux modèles courants
+git checkout HEAD -- models/
+```
+
+Les deux scripts fixent la graine du générateur aléatoire (`SEED = 42`) : Prophet échantillonnant les bornes d'intervalle via le générateur global de numpy, deux exécutions sur les mêmes modèles produisent sans cela des valeurs de coverage différentes. Avec la graine, les chiffres sont strictement reproductibles.
 
 ### Choix de Prophet
 
