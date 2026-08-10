@@ -8,25 +8,39 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Commandes
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CommandeIn(BaseModel):
-    client: str = Field(..., min_length=1, description="Nom du client ou de l'entreprise")
-    telephone: str = Field(default="", description="Numéro de téléphone (optionnel)")
+    # Les longueurs maximales reprennent exactement les bornes VARCHAR de
+    # schema_analytics (sql/02_tables.sql). Sans elles, une saisie trop longue
+    # traverse la validation, part en base, et PostgreSQL la rejette en
+    # StringDataRightTruncation — que le gestionnaire d'exception de
+    # api/routes/commandes.py convertit en 500 générique. La Gestionnaire perd
+    # alors sa saisie sans savoir quel champ corriger. Avec la borne, le rejet
+    # se produit ici, en 422, en nommant le champ fautif.
+    client: str = Field(..., min_length=1, max_length=150,
+                        description="Nom du client ou de l'entreprise")
+    telephone: str = Field(default="", max_length=20,
+                           description="Numéro de téléphone (optionnel)")
     date_facture: date = Field(default_factory=date.today, description="Date de la commande")
     service: Literal["Imprimerie", "Sérigraphie", "Maintenance", "Vidéosurveillance"] = Field(
         ..., description="Pôle d'activité"
     )
-    employe: str = Field(..., min_length=1, description="Nom de l'employé en charge")
+    employe: str = Field(..., min_length=1, max_length=150,
+                         description="Nom de l'employé en charge")
     statut_paiement: Literal["Non payé", "Payé", "Partiel"] = Field(
         default="Non payé", description="Statut du règlement"
     )
-    description: str = Field(..., min_length=1, description="Description de la prestation")
+    description: str = Field(..., min_length=1, max_length=255,
+                             description="Description de la prestation")
     quantite: int = Field(..., ge=1, description="Nombre d'unités")
-    prix_unitaire: float = Field(..., gt=0, description="Prix unitaire en FCFA")
+    # Entier et non flottant : le FCFA n'a pas de subdivision en usage, et les
+    # colonnes prix_unitaire / total_ligne sont des BIGINT. Accepter un flottant
+    # laissait PostgreSQL arrondir silencieusement à l'insertion ; un rejet
+    # explicite en 422 vaut mieux qu'une donnée corrigée sans trace.
+    prix_unitaire: int = Field(..., gt=0, description="Prix unitaire en FCFA (entier)")
 
     model_config = {"json_schema_extra": {"example": {
         "client": "Mairie de Brazzaville",
@@ -43,7 +57,7 @@ class CommandeIn(BaseModel):
 
 class CommandeOut(BaseModel):
     facture_id: str = Field(..., description="Référence générée automatiquement")
-    total: float = Field(..., description="Montant total calculé (FCFA)")
+    total: int = Field(..., description="Montant total calculé (FCFA)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

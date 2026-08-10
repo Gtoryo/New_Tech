@@ -83,6 +83,38 @@ class TestAuthentification:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Authentification des endpoints de LECTURE
+# ─────────────────────────────────────────────────────────────────────────────
+# Les prévisions de chiffre d'affaires et les KPI agrégés sont des données
+# commerciales : les exposer en lecture libre revient à publier le chiffre
+# d'affaires de la PME à qui connaît l'URL de l'instance Render. C'est la
+# catégorie API2:2023 (Broken Authentication) de l'OWASP API Security Top 10.
+# Seul /health reste ouvert, parce que c'est sa fonction.
+
+class TestAuthentificationLecture:
+
+    def test_previsions_sans_cle_rejetees_401(self):
+        assert client.get("/api/v1/previsions/global").status_code == 401
+
+    def test_previsions_cle_invalide_rejetee_401(self, cle_api):
+        r = client.get("/api/v1/previsions/global",
+                       headers={"X-API-Key": "cle-erronee"})
+        assert r.status_code == 401
+
+    def test_kpis_sans_cle_rejetes_401(self):
+        assert client.get("/api/v1/kpis/").status_code == 401
+
+    def test_kpis_cle_invalide_rejetes_401(self, cle_api):
+        r = client.get("/api/v1/kpis/", headers={"X-API-Key": "cle-erronee"})
+        assert r.status_code == 401
+
+    def test_health_reste_ouvert(self, cle_api):
+        # Contre-épreuve : la généralisation de l'authentification ne doit pas
+        # avoir fermé le health-check, que Render et la supervision interrogent.
+        assert client.get("/health").status_code == 200
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Contrat d'entrée CommandeIn — référentiel contrôlé et contraintes métier
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -120,20 +152,63 @@ class TestValidationCommande:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bornes de longueur — alignement du contrat sur les colonnes VARCHAR
+# ─────────────────────────────────────────────────────────────────────────────
+# Sans max_length, une saisie trop longue traverse la validation et n'est
+# rejetée que par PostgreSQL (StringDataRightTruncation), que le gestionnaire
+# d'exception convertit en 500 générique : la Gestionnaire perd sa saisie sans
+# savoir quel champ corriger. Ces tests verrouillent le rejet en amont, en 422.
+
+class TestBornesDeLongueur:
+
+    @pytest.mark.parametrize(
+        "champ, limite",
+        [("client", 150), ("employe", 150), ("description", 255), ("telephone", 20)],
+    )
+    def test_depassement_de_borne_rejete_422(self, cle_api, champ, limite):
+        payload = dict(COMMANDE_VALIDE, **{champ: "x" * (limite + 1)})
+        r = client.post("/api/v1/commandes/", json=payload,
+                        headers={"X-API-Key": CLE_TEST})
+        assert r.status_code == 422, f"{champ} au-dela de {limite} doit etre rejete"
+
+    @pytest.mark.parametrize(
+        "champ, limite",
+        [("client", 150), ("employe", 150), ("description", 255), ("telephone", 20)],
+    )
+    def test_valeur_a_la_borne_exacte_acceptee(self, cle_api, champ, limite):
+        # Contre-épreuve : la borne est inclusive, une valeur pile à la limite
+        # ne doit pas être rejetée par le contrat. La requête échoue plus loin,
+        # faute de base de données — tout sauf 422 prouve que le contrat passe.
+        payload = dict(COMMANDE_VALIDE, **{champ: "x" * limite})
+        r = client.post("/api/v1/commandes/", json=payload,
+                        headers={"X-API-Key": CLE_TEST})
+        assert r.status_code != 422, f"{champ} a exactement {limite} doit passer"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Contrat de lecture des prévisions
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestContratPrevisions:
+    """
+    Ces cas portent sur la validation du contrat, pas sur l'authentification :
+    ils fournissent donc une clé valide, faute de quoi la dépendance
+    d'authentification rejetterait la requête en 401 avant toute validation.
+    """
 
-    def test_service_inconnu_rejete_422(self):
-        assert client.get("/api/v1/previsions/Plomberie").status_code == 422
+    def test_service_inconnu_rejete_422(self, cle_api):
+        r = client.get("/api/v1/previsions/Plomberie",
+                       headers={"X-API-Key": CLE_TEST})
+        assert r.status_code == 422
 
-    def test_horizon_superieur_au_maximum_rejete_422(self):
-        r = client.get("/api/v1/previsions/global", params={"horizon": 999})
+    def test_horizon_superieur_au_maximum_rejete_422(self, cle_api):
+        r = client.get("/api/v1/previsions/global", params={"horizon": 999},
+                       headers={"X-API-Key": CLE_TEST})
         assert r.status_code == 422   # borne le=180
 
-    def test_horizon_nul_rejete_422(self):
-        r = client.get("/api/v1/previsions/global", params={"horizon": 0})
+    def test_horizon_nul_rejete_422(self, cle_api):
+        r = client.get("/api/v1/previsions/global", params={"horizon": 0},
+                       headers={"X-API-Key": CLE_TEST})
         assert r.status_code == 422   # borne ge=1
 
 

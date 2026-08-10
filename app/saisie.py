@@ -65,7 +65,8 @@ def afficher_saisie() -> None:
             "Nom du client *",
             key="sai_client",
             placeholder="ex : Entreprise ABC",
-            help="Nom complet du client ou de l'entreprise. La recherche est insensible à la casse.",
+            help="Nom complet du client ou de l'entreprise. "
+                 "La recherche est insensible à la casse.",
         )
     with col2:
         telephone = st.text_input(
@@ -102,14 +103,16 @@ def afficher_saisie() -> None:
             "Statut paiement *",
             options=STATUTS,
             key="sai_statut",
-            help="Indiquez si la commande a été réglée, reste à payer, ou a été partiellement payée.",
+            help="Indiquez si la commande a été réglée, reste à payer, "
+                 "ou a été partiellement payée.",
         )
 
     description = st.text_area(
         "Description *",
         key="sai_description",
         placeholder="ex : Impression flyers A5 recto-verso, 1 000 exemplaires",
-        help="Décrivez précisément la nature de la commande (produit, format, quantité, finition…).",
+        help="Décrivez précisément la nature de la commande "
+             "(produit, format, quantité, finition…).",
     )
 
     # ── Bloc Montants ─────────────────────────────────────────────────────────
@@ -149,10 +152,14 @@ def afficher_saisie() -> None:
 
     # Validation des champs obligatoires
     erreurs = []
-    if not client.strip():       erreurs.append("Nom du client")
-    if not employe.strip():      erreurs.append("Employé en charge")
-    if not description.strip():  erreurs.append("Description")
-    if prix_unitaire == 0:       erreurs.append("Prix Unitaire (ne peut pas être 0)")
+    if not client.strip():
+        erreurs.append("Nom du client")
+    if not employe.strip():
+        erreurs.append("Employé en charge")
+    if not description.strip():
+        erreurs.append("Description")
+    if prix_unitaire == 0:
+        erreurs.append("Prix Unitaire (ne peut pas être 0)")
 
     if erreurs:
         st.error(f"Champs obligatoires manquants ou invalides : **{', '.join(erreurs)}**")
@@ -168,7 +175,9 @@ def afficher_saisie() -> None:
         "statut_paiement":  statut,
         "description":      description.strip(),
         "quantite":         int(quantite),
-        "prix_unitaire":    float(prix_unitaire),
+        # Entier : le contrat CommandeIn attend un entier (FCFA sans
+        # subdivision), et la colonne prix_unitaire est un BIGINT.
+        "prix_unitaire":    int(prix_unitaire),
     }
 
     try:
