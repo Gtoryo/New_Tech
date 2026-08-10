@@ -569,7 +569,7 @@ La seule ligne non couverte de `src/` est l'appel `alimenter_series()` du garde 
 
 Les deux rapports sont republiés à chaque exécution du workflow `tests.yml`, ce qui évite qu'ils dérivent du code.
 
-Les couches Extract, Load et Aggregate écrivent toutes en base : leur comportement réel — résolution des clés étrangères, respect des contraintes d'intégrité, idempotence du `TRUNCATE + INSERT`, exactitude des requêtes d'agrégation — ne peut se vérifier que face à un vrai moteur. Elles sont donc testées contre un PostgreSQL éphémère plutôt qu'émulées : un conteneur coûte moins cher qu'une couche d'abstraction, et teste le moteur réellement utilisé en production.
+Les couches Extract, Load et Aggregate écrivent toutes en base : leur comportement réel — résolution des clés étrangères, respect des contraintes d'intégrité, idempotence du `TRUNCATE + INSERT`, exactitude des requêtes d'agrégation — ne peut se vérifier que face à un vrai moteur. Le service déclaré dans `tests.yml` utilise **la même version majeure que la production** (PostgreSQL 17) : tester contre une majeure différente affaiblirait l'argument même qui justifie ce service. Elles sont donc testées contre un PostgreSQL éphémère plutôt qu'émulées : un conteneur coûte moins cher qu'une couche d'abstraction, et teste le moteur réellement utilisé en production.
 
 > **Garde-fous.** Ces tests exécutent des `TRUNCATE`. Ils sont ignorés tant que `NEWTECH_INTEGRATION=1` n'est pas positionné, et refusent de s'exécuter si `DB_HOST` désigne un hôte hébergé ou si `DB_NAME` ne contient pas « test ».
 

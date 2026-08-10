@@ -21,7 +21,15 @@ jobs:
     # d'agrégation — ne peut se vérifier que face au moteur réellement utilisé.
     services:
       postgres:
-        image: postgres:16
+        # Version majeure alignee sur celle de l'instance Supabase de
+        # production (17.x). Tester contre une majeure differente affaiblirait
+        # l'argument qui justifie ce service : verifier le comportement du
+        # moteur reellement utilise, et non d'un moteur approchant.
+        # Le tag flottant 17 suit les correctifs de la branche sans changer de
+        # majeure. Pour controler la version en production :
+        #     SELECT version();
+        # Si Supabase passe a une majeure superieure, mettre a jour ce tag.
+        image: postgres:17
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
