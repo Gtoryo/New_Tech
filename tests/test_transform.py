@@ -4,17 +4,17 @@ Couverture : parsing de dates, normalisation des libellés, dédoublonnage.
 Aucune connexion base de données requise.
 """
 
-import pytest
 import pandas as pd
+import pytest
+
 from src.transform import (
-    _parser_date,
     _normaliser_service,
     _normaliser_ville,
-    transformer_ventes,
-    transformer_depenses,
+    _parser_date,
     transformer_clients,
+    transformer_depenses,
+    transformer_ventes,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # _parser_date
@@ -46,6 +46,16 @@ class TestParserDate:
 
     def test_texte_invalide_retourne_none(self):
         assert _parser_date("pas une date") is None
+
+    def test_valeur_deja_typee_traversee_sans_reparsage(self):
+        # extract.py lit avec dtype=str, donc la couche Transform ne reçoit
+        # aujourd'hui que des chaînes. Cette branche couvre le cas où une source
+        # future livrerait une date déjà typée — un connecteur SQL ou Parquet,
+        # là où Excel ne donne que du texte : la valeur doit traverser telle
+        # quelle, sans repasser par les tentatives de parsage.
+        deja_typee = pd.Timestamp("2024-06-15")
+        resultat = _parser_date(deja_typee)
+        assert resultat == deja_typee
 
 
 # ─────────────────────────────────────────────────────────────────────────────

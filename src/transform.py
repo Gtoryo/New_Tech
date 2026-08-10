@@ -5,9 +5,9 @@ produits par extract.py. Aucune écriture en base ici.
 """
 
 import re
-import pandas as pd
-import numpy as np
 from datetime import datetime
+
+import pandas as pd
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UTILITAIRES PARTAGÉS
@@ -45,9 +45,17 @@ _VARIANTES_PN = {"pointe noire", "pn", "pte-noire", "pointenoire",
                  "pointe-noire", "p.noire"}
 
 # Valeurs de saisie signifiant « montant non calculé » plutôt qu'un montant
-# réellement nul. Le zéro est la forme présente dans le jeu de travail
-# (121 lignes) ; 999 est une seconde convention relevée lors du cadrage,
-# conservée par sécurité si elle réapparaissait en source.
+# réellement nul.
+# Le zéro est la SEULE forme présente dans le jeu de travail versionné
+# (121 lignes) — voir la limitation documentée dans generated_data/
+# generate_data.py, qui explique pourquoi les trois formes prévues au cadrage
+# ne s'y trouvent pas toutes.
+# 999 relève donc de la programmation défensive : c'est une convention de
+# saisie relevée au cadrage sur les classeurs en service, traitée ici au cas où
+# elle apparaîtrait en source, et couverte par tests/test_transform.py sur un
+# DataFrame construit pour l'occasion. Elle n'est pas exercée par le jeu de
+# travail lui-même. Le cas « valeur absente » est traité par la même règle, via
+# le test isna() du masque plus bas.
 _SENTINELLES_TOTAL = {0, 999}
 
 

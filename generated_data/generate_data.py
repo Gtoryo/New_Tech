@@ -121,12 +121,18 @@ def date_range_list(start: date, end: date):
 
 def saisonnalite_poids(d: date) -> float:
     m = d.month
-    if m == 12:              return 2.2
-    elif m in (9, 10):       return 1.8
-    elif m == 8 and d.day >= 10 and d.day <= 20: return 1.4
-    elif m in (7, 8):        return 0.85
-    elif m in (1, 2):        return 0.90
-    else:                    return 1.0
+    if m == 12:
+        return 2.2
+    elif m in (9, 10):
+        return 1.8
+    elif m == 8 and d.day >= 10 and d.day <= 20:
+        return 1.4
+    elif m in (7, 8):
+        return 0.85
+    elif m in (1, 2):
+        return 0.90
+    else:
+        return 1.0
 
 def gen_facture_id(d: date, idx: int) -> str:
     return f"FAC-{d.strftime('%Y%m')}-{idx:04d}"
@@ -145,9 +151,12 @@ def service_avec_faute(service: str) -> str:
 
 def format_date_aleatoire(d: date) -> str:
     r = random.random()
-    if r < 0.72:   return d.strftime("%d/%m/%Y")
-    elif r < 0.85: return d.strftime("%Y-%m-%d")
-    elif r < 0.93: return d.strftime("%d-%m-%Y")
+    if r < 0.72:
+        return d.strftime("%d/%m/%Y")
+    elif r < 0.85:
+        return d.strftime("%Y-%m-%d")
+    elif r < 0.93:
+        return d.strftime("%d-%m-%Y")
     else:
         mois_fr = ["","Janvier","Février","Mars","Avril","Mai","Juin",
                    "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
@@ -186,10 +195,14 @@ def generer_ventes() -> pd.DataFrame:
             prix_unit  = round(random.randint(pu_min, pu_max) / 100) * 100
             total_calc = quantite * prix_unit
 
-            if secteur == "video":           cle_employe = "Vidéosurveillance"
-            elif secteur == "maintenance":   cle_employe = "Maintenance"
-            elif secteur == "serigraphie":   cle_employe = "Sérigraphie"
-            else:                            cle_employe = "Imprimerie"
+            if secteur == "video":
+                cle_employe = "Vidéosurveillance"
+            elif secteur == "maintenance":
+                cle_employe = "Maintenance"
+            elif secteur == "serigraphie":
+                cle_employe = "Sérigraphie"
+            else:
+                cle_employe = "Imprimerie"
             employe = random.choice(EMPLOYES[cle_employe])
 
             statut = random.choices(
@@ -223,6 +236,22 @@ def generer_ventes() -> pd.DataFrame:
     mask_pu = np.random.random(n) < 0.03
     df.loc[mask_pu, "Prix_Unitaire"] = np.nan
     mask_incoh = np.random.random(n) < 0.04
+    # LIMITATION CONNUE, VOLONTAIREMENT CONSERVEE.
+    # random.choice() est evalue UNE SEULE FOIS, hors boucle : les ~4 % de
+    # lignes selectionnees recoivent donc toutes la MEME valeur, et non un
+    # melange des trois. Avec la graine fixee a 42, le tirage tombe sur 0 : le
+    # jeu de travail versionne contient 121 lignes a Total = 0, aucune a 999 et
+    # aucune valeur absente.
+    # Ce comportement n'est pas corrige ici, et c'est deliberé : regenerer le
+    # jeu changerait chaque chiffre publie dans le rapport (metriques de
+    # cross-validation, surveillance de derive, taux d'anomalies) et casserait
+    # la reproductibilite ancree au tag metriques-rapport-v1. Le jeu de travail
+    # est donc gele.
+    # Consequence a assumer : les branches 999 et valeur absente de
+    # _SENTINELLES_TOTAL (src/transform.py) relevent de la programmation
+    # defensive. Elles restent couvertes par tests/test_transform.py, sur des
+    # DataFrames construits pour l'occasion, mais ne sont pas exercees par le
+    # jeu de travail lui-meme. Le rapport doit le dire ainsi.
     df.loc[mask_incoh, "Total"] = random.choice([0, np.nan, 999])
 
     n_doublons = int(n * 0.05)
@@ -274,7 +303,9 @@ ARTICLES_BASE = {
 }
 
 VARIANTES_ORTHO = {
-    "T-shirt blanc 100% coton": ["T-shirt Blanc", "Tshirt blanc", "TSHIRT BLANC", "t-shirt blanc coton"],
+    "T-shirt blanc 100% coton": [
+        "T-shirt Blanc", "Tshirt blanc", "TSHIRT BLANC", "t-shirt blanc coton",
+    ],
     "Ramette papier A4 80g":    ["Ramette A4", "Papier A4 80g", "RAMETTE A4 80G", "ramette papier"],
     "Encre sérigraphie noir 1L":["Encre Noire Séri", "encre sérigraphie noire", "ENCRE SERI NOIR"],
 }
@@ -350,7 +381,8 @@ PROSPECTS_SUPPLEMENTAIRES = [
     ("Patrick Madzimba",     "",                           "05 712 0011", None),
     ("Ghislaine Koubemba",   "ONG Femmes et Développement","06 611 3344", "gkouemba@ong-fd.org"),
     ("Sylvestre Makaya",     "Librairie Lecture Facile",   "05 530 1122", None),
-    ("Nadège Bitsindou",     "Hôtel Résidence du Fleuve",  "06 900 7788", "nadege@residencefleuve.cg"),
+    ("Nadège Bitsindou",     "Hôtel Résidence du Fleuve",  "06 900 7788",
+     "nadege@residencefleuve.cg"),
     ("Elie Mpouya",          "Supermarché Mbota",          "05 620 9988", "empouya@mbota.cg"),
     ("Véronique Nzoussi",    "École Primaire Pointe-Noire","06 513 0099", None),
     ("Cédric Louboto",       "Banque Populaire du Congo",  "06 730 1122", "clouboto@bpc.cg"),
@@ -382,11 +414,16 @@ def generer_clients() -> pd.DataFrame:
     for client, telephone in CLIENTS:
         ville_r = random.random()
         ville = random.choice(VARIANTES_VILLE_PN) if ville_r < 0.88 else "Brazzaville"
+        # Identifiant de messagerie derive du nom : minuscules, espaces en
+        # points, accents aplatis, tronque a 15 caracteres.
+        identifiant = (
+            client.lower().replace(" ", ".").replace("é", "e").replace("è", "e")[:15]
+        )
         rows.append({
             "Nom_Client":  client,
             "Entreprise":  client,
             "Telephone":   telephone if pd.notna(telephone) else np.nan,
-            "Email":       f"{client.lower().replace(' ', '.').replace('é','e').replace('è','e')[:15]}@gmail.com"
+            "Email":       f"{identifiant}@gmail.com"
                            if random.random() > 0.4 else np.nan,
             "Ville":       ville,
             "Notes":       random.choice(NOTES_POSSIBLES),
@@ -429,7 +466,7 @@ def sauvegarder_excel(df: pd.DataFrame, nom_fichier: str, nom_onglet: str):
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=nom_onglet, index=False)
         ws = writer.sheets[nom_onglet]
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
         header_fill = PatternFill("solid", start_color="D9D9D9", end_color="D9D9D9")
         for cell in ws[1]:
             cell.font      = Font(bold=True, name="Arial", size=10)
