@@ -5,9 +5,10 @@ Convention Streamlit Cloud : ce fichier doit s'appeler streamlit_app.py.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 
-from app.login import afficher_login
 from app.dashboard import afficher_dashboard
+from app.login import afficher_login
 from app.saisie import afficher_saisie
 
 # ── Configuration globale (doit être le 1er appel Streamlit) ──────────────────
@@ -18,9 +19,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Accessibilité — attribut lang et indicateurs de focus (WCAG 2.4.7 / RGAA) ─
+# ── Accessibilité — attribut lang de la page (RGAA 8.3) ──────────────────────
+# st.markdown() n'exécute PAS le JavaScript qu'on lui passe : Streamlit insère
+# le fragment via innerHTML, et un navigateur n'exécute jamais un <script>
+# inséré de cette façon. L'attribut lang restait donc absent malgré le code.
+# st.components.v1.html(), lui, crée une véritable iframe dont le script
+# s'exécute ; on remonte au document parent pour y poser l'attribut.
+components.html(
+    "<script>window.parent.document.documentElement.lang = 'fr';</script>",
+    height=0,
+)
+
+# ── Accessibilité — indicateurs de focus (WCAG 2.4.7 / RGAA) ─────────────────
+# Le CSS, lui, s'applique bien par cette voie : une balise <style> insérée dans
+# le DOM est prise en compte par le navigateur, contrairement à <script>.
 st.markdown("""
-<script>document.documentElement.lang = 'fr';</script>
 <style>
 /* WCAG 2.4.7 — Focus visible sur tous les éléments interactifs */
 button:focus-visible,
