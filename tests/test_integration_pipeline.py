@@ -15,13 +15,22 @@ et teste le moteur réellement utilisé en production.
 ACTIVATION — ces tests sont ignorés par défaut, afin que `pytest tests/` reste
 exécutable sans infrastructure.
 
-    docker run -d --name pg-test -p 55432:5432 \
-        -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test \
-        -e POSTGRES_DB=newtech_test postgres:16
+La seule dépendance est **un PostgreSQL jetable**, quelle qu'en soit la
+provenance. Le projet n'en fournit ni n'en administre aucun : la voie de
+référence est le service déclaré dans .github/workflows/tests.yml, que GitHub
+Actions démarre avec le job et détruit à la fin. Ces tests s'exécutent donc à
+chaque push sans qu'aucun moteur ne soit installé sur un poste de travail.
 
-    NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=55432 DB_USER=test \
+Pour les rejouer en local, il suffit de faire pointer les variables DB_* vers
+n'importe quelle instance jetable — PostgreSQL installé sur le poste, service
+d'un collègue, conteneur si l'on en dispose — puis :
+
+    NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=5432 DB_USER=test \
     DB_PASSWORD=test DB_NAME=newtech_test DB_SSLMODE=disable \
         pytest tests/test_integration_pipeline.py -v
+
+Le nom de base DOIT contenir « test » : c'est l'un des deux garde-fous vérifiés
+par _refuser_si_production() ci-dessous.
 """
 
 import os
@@ -80,10 +89,10 @@ def moteur():
 @pytest.fixture(scope="session")
 def pipeline_charge(moteur):
     """Exécute la chaîne complète Extract → Transform → Load → Aggregate."""
-    from src.extract import extraire_tout
-    from src.transform import transformer_tout
-    from src.load import charger_brut, charger_analytics
     from src.aggregate import alimenter_series
+    from src.extract import extraire_tout
+    from src.load import charger_analytics, charger_brut
+    from src.transform import transformer_tout
 
     dfs = extraire_tout()
     charger_brut(dfs)
@@ -164,8 +173,11 @@ class TestChargementAnalytics:
         # Une facture sans employé assigné est conservée — la commande a eu lieu
         # et son chiffre d'affaires compte — avec id_employe à NULL. Ce test
         # verrouille le fait que ce NULL provient bien de la source et non d'une
-        # résolution de clé étrangère qui aurait échoué : les deux comptes
-        # doivent coïncider exactement.
+        # résolution de clé étrangère qui aurait échoué.
+        # L'assertion est une inégalité, pas une égalité : la déduplication sur
+        # Facture_ID retire des lignes en amont, le compte en base est donc au
+        # plus égal au compte source. C'est le dépassement qui signalerait une
+        # résolution défaillante.
         from src.extract import extraire_tout
 
         attendu = int(extraire_tout()["ventes"]["Employe_En_Charge"].isna().sum())
@@ -214,8 +226,8 @@ class TestChargementAnalytics:
         # TRUNCATE + INSERT : recharger deux fois doit produire le même état,
         # sans accumulation ni violation de contrainte d'unicité.
         from src.extract import extraire_tout
-        from src.transform import transformer_tout
         from src.load import charger_analytics
+        from src.transform import transformer_tout
 
         avant = {t: _compter(pipeline_charge, f"schema_analytics.{t}")
                  for t in ("client", "facture", "ligne_facture", "achat")}

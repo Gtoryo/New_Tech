@@ -6,8 +6,9 @@ Responsabilité unique : envoyer les DataFrames dans Supabase.
   charger_analytics() → schema_analytics (données propres, à venir)
 """
 
-import pandas as pd
 from datetime import datetime
+
+import pandas as pd
 from sqlalchemy import text
 
 from src.db import creer_moteur
@@ -94,7 +95,9 @@ def _inserer_et_lire(
             f"SELECT {col_id}, {col_nom} FROM schema_analytics.{nom_table}",
             conn,
         )
-    return dict(zip(df_ids[col_nom], df_ids[col_id]))
+    # strict=True : les deux colonnes viennent du même DataFrame, une longueur
+    # différente signalerait une relecture partielle et doit lever, pas tronquer.
+    return dict(zip(df_ids[col_nom], df_ids[col_id], strict=True))
 
 
 def charger_analytics(data: dict) -> None:
@@ -135,10 +138,30 @@ def charger_analytics(data: dict) -> None:
     df_clients_ventes["email"]      = None
     df_clients_ventes["ville"]      = None
 
+    # Priorité de source : 0 pour le fichier clients, qui porte entreprise,
+    # email et ville, 1 pour les clients reconstitués depuis les ventes.
+    df_clients_complets["_src"] = 0
+    df_clients_ventes["_src"]   = 1
+
     df_all_clients = pd.concat(
         [df_clients_complets, df_clients_ventes], ignore_index=True
     )
-    df_all_clients = df_all_clients.drop_duplicates(subset=["nom_client"], keep="first")
+
+    # Déduplication insensible à la casse, comme dans transformer_clients() et
+    # comme l'index ux_client_nom_lower de sql/03_contraintes_unicite.sql. Une
+    # déduplication sur la colonne brute laisserait passer « Pharmacie X » venu
+    # du fichier clients et « PHARMACIE X » venu du fichier ventes : les deux
+    # lignes partiraient en base et PostgreSQL rejetterait tout le chargement
+    # sur violation d'unicité de l'index d'expression.
+    # Ordre de conservation : la fiche la plus riche d'abord (_src), puis, à
+    # source égale, la variante en casse mixte, plus lisible (False avant True).
+    df_all_clients["_cle"] = df_all_clients["nom_client"].str.lower()
+    df_all_clients["_maj"] = df_all_clients["nom_client"].str.isupper()
+    df_all_clients = (
+        df_all_clients.sort_values(["_cle", "_src", "_maj"], kind="stable")
+        .drop_duplicates(subset=["_cle"], keep="first")
+        .drop(columns=["_cle", "_src", "_maj"])
+    )
 
     map_client = _inserer_et_lire(df_all_clients, "client", "id_client", "nom_client", moteur)
     print(f"[LOAD ANALYTICS] client          : {len(df_all_clients):>5} lignes")
@@ -154,7 +177,9 @@ def charger_analytics(data: dict) -> None:
         df_services = pd.read_sql(
             "SELECT id_service, libelle FROM schema_analytics.service", conn
         )
-    map_service = dict(zip(df_services["libelle"], df_services["id_service"]))
+    map_service = dict(
+        zip(df_services["libelle"], df_services["id_service"], strict=True)
+    )
 
     # ── ÉTAPE 4 : Factures (avec IDs résolus) ────────────────────────────────
     df_factures = ventes["factures"].copy()
