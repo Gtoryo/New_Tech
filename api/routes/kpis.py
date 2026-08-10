@@ -5,9 +5,10 @@ Agrège les indicateurs clés via SQL direct depuis schema_ia.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 
+from api.auth import verifier_cle_api
 from api.database import get_engine
 from api.schemas import KpiOut
 
@@ -22,10 +23,11 @@ router = APIRouter(prefix="/kpis", tags=["KPIs"])
     summary="Obtenir les indicateurs clés de performance",
     description=(
         "Calcule en temps réel CA total, nombre de commandes, CA moyen journalier "
-        "et pôle leader depuis les séries temporelles de schema_ia."
+        "et pôle leader depuis les séries temporelles de schema_ia. "
+        "Authentification par clé API requise (en-tête X-API-Key)."
     ),
 )
-def obtenir_kpis() -> KpiOut:
+def obtenir_kpis(_: str = Depends(verifier_cle_api)) -> KpiOut:
     engine = get_engine()
     try:
         with engine.connect() as conn:

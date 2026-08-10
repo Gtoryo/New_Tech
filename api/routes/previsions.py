@@ -5,11 +5,12 @@ Aucune dépendance à Prophet ni à pandas à l'exécution : simple SELECT SQL.
 """
 
 from datetime import date
-from typing import List, Literal
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
 
+from api.auth import verifier_cle_api
 from api.database import get_engine
 from api.schemas import PrevisionPoint
 
@@ -20,18 +21,20 @@ ServiceType = Literal["global", "Imprimerie", "Sérigraphie", "Maintenance", "Vi
 
 @router.get(
     "/{service}",
-    response_model=List[PrevisionPoint],
+    response_model=list[PrevisionPoint],
     summary="Obtenir les prévisions Prophet pour un pôle d'activité",
     description=(
         "Retourne jusqu'à `horizon` points de prévision journaliers. "
         "Les valeurs sont pré-calculées lors du réentraînement mensuel "
-        "(GitHub Actions) et stockées dans schema_ia.previsions_prophet."
+        "(GitHub Actions) et stockées dans schema_ia.previsions_prophet. "
+        "Authentification par clé API requise (en-tête X-API-Key)."
     ),
 )
 def obtenir_previsions(
     service: ServiceType,
     horizon: int = Query(default=90, ge=1, le=180, description="Nombre de jours futurs (max 180)"),
-) -> List[PrevisionPoint]:
+    _: str = Depends(verifier_cle_api),
+) -> list[PrevisionPoint]:
     engine = get_engine()
     with engine.connect() as conn:
         result = conn.execute(

@@ -1,7 +1,15 @@
 """
 auth.py — Authentification par clé API (header X-API-Key).
+
 La clé est stockée dans la variable d'environnement API_SECRET_KEY,
 jamais dans le code source. Conformité OWASP A07 (Identification failures).
+
+Cette dépendance protège l'écriture ET la lecture. Les prévisions de chiffre
+d'affaires et les KPI agrégés sont des données commerciales : les laisser en
+accès libre reviendrait à publier l'activité de la PME à qui connaît l'URL de
+l'instance, ce que l'OWASP API Security Top 10 classe en API2:2023 (Broken
+Authentication). Seul /health reste ouvert, puisque sa fonction est justement
+d'être interrogeable sans identification.
 """
 
 import os
