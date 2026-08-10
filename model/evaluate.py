@@ -51,7 +51,9 @@ def _afficher_df(df: pd.DataFrame) -> None:
 
 def metriques_par_horizon(modele: Prophet, label: str) -> pd.DataFrame:
     """
-    Cross-validation temporelle à fenêtre glissante.
+    Cross-validation temporelle à fenêtre croissante (expanding window) : à
+    chaque coupure, Prophet est réentraîné sur TOUT l'historique disponible
+    jusqu'à cette date, et non sur une fenêtre de largeur fixe.
     Paramètres cohérents avec la section 4.3 du rapport :
       initial = 365 jours   (historique minimal d'entraînement)
       period  = 30  jours   (espacement entre les cutoffs)
@@ -142,7 +144,7 @@ def metriques_agregees(modele: Prophet, label: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. COMPARAISON À DES PRÉVISIONS DE RÉFÉRENCE (MASE)
+# 3. COMPARAISON À DES PRÉVISIONS DE RÉFÉRENCE (RelMAE)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
@@ -150,18 +152,27 @@ def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
     Compare Prophet à deux prévisions de référence sur les mêmes points de coupure.
 
     Un MAPE lu isolément ne dit rien de la valeur ajoutée d'un modèle : sur une
-    série à forte dispersion, toute méthode affiche un pourcentage élevé. La
-    référence méthodologique (Hyndman & Koehler, 2006) consiste à rapporter
-    l'erreur du modèle à celle d'une prévision naïve — c'est le MASE.
+    série à forte dispersion, toute méthode affiche un pourcentage élevé. Le
+    principe méthodologique (Hyndman & Koehler, 2006) consiste à rapporter
+    l'erreur du modèle à celle d'une prévision naïve.
+
+    La mesure calculée ici est un RelMAE (relative mean absolute error) et non
+    le MASE au sens strict : le MASE met l'erreur à l'échelle de l'erreur naïve
+    mesurée DANS l'échantillon d'entraînement, là où le rapport ci-dessous la
+    mesure sur la fenêtre d'évaluation, aux mêmes dates que le modèle. Le seuil
+    s'interprète de la même façon — sous 1, le modèle bat la référence — mais le
+    dénominateur diffère, donc le nom aussi.
 
     Deux références sont évaluées sur les mêmes cutoffs et horizons que la
-    cross-validation, donc à information strictement égale :
+    cross-validation, et surtout à information strictement égale : chacune est
+    bornée aux observations disponibles AU POINT DE COUPURE.
       - naïf saisonnier : rejoue la valeur du même jour de la semaine
         précédente (J-7), en remontant de semaine en semaine si la date est
-        absente de la série (le pôle ferme certains jours) ;
+        absente de la série (le pôle ferme certains jours), et à défaut la
+        dernière observation connue au cutoff ;
       - moyenne historique : moyenne de tout l'historique disponible au cutoff.
 
-    Un MASE inférieur à 1 établit que le modèle capture une structure que la
+    Un RelMAE inférieur à 1 établit que le modèle capture une structure que la
     prévision naïve ne reproduit pas.
     """
     print(f"\n  Comparaison aux références [{label}] en cours...", end=" ", flush=True)
@@ -178,23 +189,39 @@ def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
 
     historique = modele.history.set_index("ds")["y"]
 
-    def _naif_saisonnier(date) -> float:
+    # Historique tronqué au cutoff, mémoïsé : une prévision émise à la date de
+    # coupure ne dispose de rien au-delà. Sans cette borne, la référence J-7
+    # d'une date à cutoff+60 irait lire l'observation de cutoff+53, postérieure
+    # à la coupure — la référence bénéficierait d'une information que le modèle
+    # n'a pas, et la comparaison ne serait plus à information égale.
+    _disponible: dict = {}
+
+    def _historique_au_cutoff(cutoff) -> pd.Series:
+        if cutoff not in _disponible:
+            _disponible[cutoff] = historique[historique.index <= cutoff]
+        return _disponible[cutoff]
+
+    def _naif_saisonnier(date, cutoff) -> float:
         """Valeur du même jour de la semaine précédente, à défaut J-14, J-21, J-28."""
+        dispo = _historique_au_cutoff(cutoff)
         for recul in (7, 14, 21, 28):
-            valeur = historique.get(date - pd.Timedelta(days=recul))
+            valeur = dispo.get(date - pd.Timedelta(days=recul))
             if valeur is not None and not pd.isna(valeur):
                 return valeur
-        return np.nan
+        # Aucun antécédent hebdomadaire dans la fenêtre disponible : on rejoue
+        # la dernière observation connue, ce que ferait un naïf de persistance.
+        return dispo.iloc[-1] if len(dispo) else np.nan
 
-    df_cv["naif"] = df_cv["ds"].apply(_naif_saisonnier)
+    df_cv["naif"] = [
+        _naif_saisonnier(d, c)
+        for d, c in zip(df_cv["ds"], df_cv["cutoff"], strict=True)
+    ]
 
     # Moyenne calculée une fois par cutoff plutôt qu'une fois par ligne
-    moyennes = {c: historique[historique.index <= c].mean()
-                for c in df_cv["cutoff"].unique()}
+    moyennes = {c: _historique_au_cutoff(c).mean() for c in df_cv["cutoff"].unique()}
     df_cv["moyenne"] = df_cv["cutoff"].map(moyennes)
 
-    # Les premières dates de la série n'ont pas d'antécédent à J-7 : on les
-    # écarte pour que les trois méthodes soient comparées sur les mêmes points.
+    # Garde-fou : une ligne sans référence calculable fausserait la comparaison.
     df_cv = df_cv.dropna(subset=["naif"])
 
     mae_naif = (df_cv["y"] - df_cv["naif"]).abs().mean()
@@ -208,7 +235,7 @@ def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
             "Modèle":     nom,
             "MAE (FCFA)": int(erreur_abs.mean().round(0)),
             "MAPE (%)":   round((erreur_abs / df_cv["y"]).mean() * 100, 1),
-            "MASE":       round(erreur_abs.mean() / mae_naif, 3),
+            "RelMAE":     round(erreur_abs.mean() / mae_naif, 3),
         })
 
     return pd.DataFrame(lignes)
@@ -291,7 +318,7 @@ if __name__ == "__main__":
     _afficher_df(df_agg)
 
     # ── Tableau 3 : comparaison aux prévisions de référence ──────────────────
-    _afficher_titre("COMPARAISON AUX PRÉVISIONS DE RÉFÉRENCE (MASE) — modèle global")
+    _afficher_titre("COMPARAISON AUX PRÉVISIONS DE RÉFÉRENCE (RelMAE) — modèle global")
     df_base = metriques_vs_baselines(modele_global, "global")
     _afficher_df(df_base)
 
