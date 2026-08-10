@@ -4,8 +4,9 @@ Responsabilité unique : lire les fichiers Excel sources et retourner
 les données BRUTES sans aucune transformation.
 """
 
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 # Dossier data/ situé à la racine du projet (deux niveaux au-dessus de src/)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"

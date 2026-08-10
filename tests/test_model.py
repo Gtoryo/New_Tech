@@ -4,10 +4,10 @@ Couverture : slugification, entraînement, structure des prévisions, horizon.
 Aucune connexion base de données requise.
 """
 
-import pytest
 import pandas as pd
-from model.train import _slugify, _entrainer_prophet, _preparer_previsions
+import pytest
 
+from model.train import _entrainer_prophet, _preparer_previsions, _slugify
 
 # ─────────────────────────────────────────────────────────────────────────────
 # _slugify

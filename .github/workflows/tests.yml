@@ -68,6 +68,13 @@ jobs:
               shutil.rmtree(p, ignore_errors=True)
           "
 
+      # Placée avant les tests : une erreur de style ou un import mort se
+      # détectent en quelques secondes, là où la suite complète demande
+      # plusieurs minutes (compilation Stan comprise). Le rapport revendique la
+      # conformité PEP 8 ; cette étape est ce qui la vérifie.
+      - name: Analyse statique (ruff)
+        run: ruff check .
+
       - name: Suite complète (unitaires, API, IA, intégration ETL)
         run: pytest tests/ -v
 

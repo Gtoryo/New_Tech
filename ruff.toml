@@ -1,0 +1,48 @@
+# =============================================================================
+# ruff.toml — Configuration de l'analyse statique
+# =============================================================================
+# Le rapport revendique la conformité PEP 8 : cette configuration est ce qui
+# la garantit, plutôt qu'une relecture à l'œil. Elle est exécutée en CI par
+# .github/workflows/tests.yml, avant la suite de tests.
+#
+# Exécution locale :
+#     ruff check .          # signale
+#     ruff check . --fix    # corrige ce qui est corrigeable sans risque
+#     ruff format --diff .  # montre les écarts de formatage sans les appliquer
+# =============================================================================
+
+line-length = 100
+target-version = "py311"
+
+# L'environnement virtuel local et le jeu de travail généré ne sont pas du code
+# de production : les analyser n'apprendrait rien et noierait les vrais signaux.
+exclude = [".env", "__pycache__", ".pytest_cache"]
+
+[lint]
+# Sélection délibérément resserrée, chaque famille pour une raison :
+#   E, W  pycodestyle — la conformité PEP 8 elle-même
+#   F     pyflakes    — imports inutilisés, variables non définies, f-strings vides
+#   I     isort       — ordre des imports, pour supprimer un motif récurrent de diff
+#   UP    pyupgrade   — syntaxe obsolète au regard de la cible Python 3.11
+#   B     bugbear     — pièges réels (mutable par défaut, boucle capturant une variable)
+select = ["E", "W", "F", "I", "UP", "B"]
+
+# E741 (nom de variable ambigu) : non retenu, aucun cas dans le projet et la
+# règle produit surtout du bruit sur les compréhensions courtes.
+ignore = []
+
+[lint.per-file-ignores]
+# Les tests importent des fonctions privées (préfixe _) de façon assumée :
+# c'est leur objet même que de couvrir la logique interne du pipeline.
+"tests/*" = ["E501"]
+# Ces trois modules ajoutent la racine au sys.path avant d'importer les modules
+# du projet — un import ne peut donc pas y précéder du code exécutable.
+"model/predict.py" = ["E402"]
+"app/dashboard.py" = ["E402"]
+"app/saisie.py" = ["E402"]
+"src/aggregate.py" = ["E402"]
+"model/train.py" = ["E402"]
+"model/monitor.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["src", "api", "app", "model"]
