@@ -10,13 +10,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.db import creer_moteur
 from model.predict import predire
+from src.db import creer_moteur
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PALETTE COULEURS ET MOTIFS PAR SERVICE
@@ -51,6 +52,48 @@ def _hex_rgba(hex_color: str, alpha: float = 0.15) -> str:
 def _fmt(valeur: int) -> str:
     """Formate un entier avec des espaces comme séparateur de milliers."""
     return f"{valeur:,}".replace(",", " ")
+
+
+def agreger_previsions_au_mois(df_prev: pd.DataFrame, jours_min: int = 20) -> pd.DataFrame:
+    """
+    Agrège des prévisions journalières (ds, yhat, yhat_lower, yhat_upper) au mois.
+
+    La prévision centrale s'additionne : l'espérance d'une somme est la somme des
+    espérances. Les bornes de l'intervalle, non — les sommer reviendrait à
+    supposer les erreurs journalières parfaitement corrélées. C'est faux, et la
+    section 4.3 du rapport le mesure : le MAPE tombe de 133 % en journalier à
+    17,4 % en mensuel précisément parce que les écarts de signes opposés se
+    compensent. Sous indépendance approximative, la demi-largeur d'un cumul de
+    n jours croît en √n et non en n — sommer les bornes élargirait l'intervalle
+    d'un facteur ~√30 ≈ 5,5 sur un mois plein, et gonflerait d'autant le seuil
+    de stock lu par le Directeur.
+
+    Les mois comptant moins de `jours_min` jours de prévision sont écartés :
+    en bord d'horizon, un mois partiel produit une barre trompeuse. Le filtre
+    est levé s'il ne laisserait aucune ligne.
+
+    Fonction pure, sans dépendance à Streamlit : testable sans rendu.
+    """
+    df = df_prev.assign(
+        mois=df_prev["ds"].dt.to_period("M").dt.to_timestamp(),
+        _demi=(df_prev["yhat_upper"] - df_prev["yhat_lower"]) / 2,
+    )
+    agg = (
+        df.groupby("mois")
+        .agg(yhat=("yhat", "sum"), _demi_moyenne=("_demi", "mean"), n_jours=("ds", "size"))
+        .reset_index()
+    )
+
+    pleins = agg[agg["n_jours"] >= jours_min]
+    if not pleins.empty:
+        agg = pleins
+
+    demi = np.sqrt(agg["n_jours"]) * agg["_demi_moyenne"]
+    # Un chiffre d'affaires ne peut pas être négatif : même écrêtage que celui
+    # appliqué aux prévisions journalières dans model/train.py.
+    agg["yhat_lower"] = (agg["yhat"] - demi).clip(lower=0)
+    agg["yhat_upper"] = agg["yhat"] + demi
+    return agg.drop(columns=["_demi_moyenne"]).reset_index(drop=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +155,8 @@ def afficher_dashboard() -> None:
             options=[30, 60, 90, 120, 180],
             value=90,
             format_func=lambda x: f"{x} jours",
-            help="Nombre de jours futurs à afficher sur la courbe de prévision (maximum 180 jours).",
+            help="Nombre de jours futurs à afficher sur la courbe de prévision "
+                 "(maximum 180 jours).",
         )
 
         st.divider()
@@ -182,11 +226,16 @@ def afficher_dashboard() -> None:
         barmode="stack", template="plotly_white",
     )
     fig_bar.update_traces(
-        hovertemplate="<b>%{data.name}</b><br>Mois : %{x|%B %Y}<br>CA : %{y:,.0f} FCFA<extra></extra>",
+        hovertemplate=(
+            "<b>%{data.name}</b><br>Mois : %{x|%B %Y}"
+            "<br>CA : %{y:,.0f} FCFA<extra></extra>"
+        ),
     )
+    # Pas de titre dans la figure : le st.subheader ci-dessus est un vrai <h3>,
+    # donc un point d'entrée réel pour un lecteur d'écran. Un titre Plotly réduit
+    # à 1 px resterait visible à l'écran sans pour autant nommer le graphique
+    # dans l'arbre d'accessibilité — l'alternative textuelle est l'expander.
     fig_bar.update_layout(
-        title_text="Chiffre d'affaires mensuel empilé par pôle d'activité",
-        title_font_size=1,  # masqué visuellement, présent pour les lecteurs d'écran
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=10, b=10), height=380,
     )
@@ -197,7 +246,9 @@ def afficher_dashboard() -> None:
         st.caption("Tableau de données correspondant au graphique ci-dessus.")
         df_display = df_mensuel.copy()
         df_display["mois"] = df_display["mois"].dt.strftime("%B %Y")
-        df_display["ca_total"] = df_display["ca_total"].apply(lambda x: f"{int(x):,} FCFA".replace(",", " "))
+        df_display["ca_total"] = df_display["ca_total"].apply(
+            lambda x: f"{int(x):,} FCFA".replace(",", " ")
+        )
         st.dataframe(
             df_display.rename(columns={"mois": "Mois", "service": "Pôle", "ca_total": "CA"}),
             use_container_width=True, hide_index=True,
@@ -218,11 +269,12 @@ def afficher_dashboard() -> None:
         fig_donut.update_traces(
             textinfo="percent+label",
             textfont_size=13,
-            hovertemplate="<b>%{label}</b><br>CA : %{value:,.0f} FCFA<br>Part : %{percent}<extra></extra>",
+            hovertemplate=(
+                "<b>%{label}</b><br>CA : %{value:,.0f} FCFA"
+                "<br>Part : %{percent}<extra></extra>"
+            ),
         )
         fig_donut.update_layout(
-            title_text="Répartition du chiffre d'affaires total par pôle d'activité",
-            title_font_size=1,
             showlegend=True,
             margin=dict(t=10, b=10), height=320,
         )
@@ -230,10 +282,16 @@ def afficher_dashboard() -> None:
         # WCAG 1.1.1 — alternative textuelle
         with st.expander("📋 Données — Répartition du CA (tableau)"):
             df_donut_display = ca_par_service.copy()
-            df_donut_display["part"] = (df_donut_display["y"] / df_donut_display["y"].sum() * 100).round(1)
-            df_donut_display["y"] = df_donut_display["y"].apply(lambda x: f"{int(x):,} FCFA".replace(",", " "))
+            df_donut_display["part"] = (
+                df_donut_display["y"] / df_donut_display["y"].sum() * 100
+            ).round(1)
+            df_donut_display["y"] = df_donut_display["y"].apply(
+                lambda x: f"{int(x):,} FCFA".replace(",", " ")
+            )
             st.dataframe(
-                df_donut_display.rename(columns={"service": "Pôle", "y": "CA Total", "part": "Part (%)"}),
+                df_donut_display.rename(
+                    columns={"service": "Pôle", "y": "CA Total", "part": "Part (%)"}
+                ),
                 use_container_width=True, hide_index=True,
             )
 
@@ -256,8 +314,6 @@ def afficher_dashboard() -> None:
             hovertemplate="<b>%{y}</b><br>CA total : %{x:,.0f} FCFA<extra></extra>",
         )
         fig_hbar.update_layout(
-            title_text="Classement des pôles d'activité par chiffre d'affaires total",
-            title_font_size=1,
             showlegend=False, margin=dict(t=10, b=10), height=320,
         )
         st.plotly_chart(fig_hbar, use_container_width=True)
@@ -291,28 +347,23 @@ def afficher_dashboard() -> None:
         .agg(y=("y", "sum"), n_jours=("ds", "size"))
         .reset_index()
     )
-    # On écarte les mois partiels en bord de série (barre trompeuse)
+    # On écarte les mois partiels en bord de série (barre trompeuse : un mois
+    # à 3 jours d'activité paraîtrait un effondrement du chiffre d'affaires).
     df_hist_pleins = df_hist_mois[df_hist_mois["n_jours"] >= 20]
+    mois_ecartes = []
     if not df_hist_pleins.empty:
+        mois_ecartes = (
+            df_hist_mois.loc[df_hist_mois["n_jours"] < 20, "mois"]
+            .dt.strftime("%B %Y").tolist()
+        )
         df_hist_mois = df_hist_pleins
 
     # Prévision agrégée au mois : même granularité que l'historique. Sans cela,
     # la prévision journalière (~20x plus petite qu'une somme mensuelle) est
     # écrasée sous les barres mensuelles et paraît absente du graphique.
-    df_prev_mois = (
-        df_prev.assign(mois=df_prev["ds"].dt.to_period("M").dt.to_timestamp())
-        .groupby("mois")
-        .agg(
-            yhat=("yhat", "sum"),
-            yhat_lower=("yhat_lower", "sum"),
-            yhat_upper=("yhat_upper", "sum"),
-            n_jours=("ds", "size"),
-        )
-        .reset_index()
-    )
-    df_prev_pleins = df_prev_mois[df_prev_mois["n_jours"] >= 20]
-    if not df_prev_pleins.empty:
-        df_prev_mois = df_prev_pleins
+    # La reconstruction de l'intervalle est isolée dans une fonction pure, donc
+    # testable sans rendu — voir tests/test_dashboard.py.
+    df_prev_mois = agreger_previsions_au_mois(df_prev)
 
     fig_prev = go.Figure()
     fig_prev.add_trace(go.Bar(
@@ -334,18 +385,30 @@ def afficher_dashboard() -> None:
         hovertemplate="Mois : %{x|%B %Y}<br>Prévision : %{y:,.0f} FCFA<extra></extra>",
     ))
     fig_prev.update_layout(
-        title_text=f"Prévision Prophet — {service_choisi} — horizon {horizon} jours",
-        title_font_size=1,
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        # Légende sous le graphique : au-dessus, elle chevauchait la barre
+        # d'outils Plotly ancrée en haut à droite.
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5),
         xaxis_title="Mois", yaxis_title="CA mensuel (FCFA)",
-        margin=dict(t=10, b=10), height=420,
+        margin=dict(t=30, b=10), height=440,
     )
     st.plotly_chart(fig_prev, use_container_width=True)
 
+    # Sans cette mention, le trou laissé par un mois écarté se lit comme un arrêt
+    # d'activité alors qu'il ne traduit qu'un mois incomplet en bord de série.
+    if mois_ecartes:
+        st.caption(
+            f"Mois incomplet(s) écarté(s) de l'historique — moins de 20 jours "
+            f"d'activité relevés : {', '.join(mois_ecartes)}."
+        )
+
     st.caption(
         f"Prévision moyenne : **{_fmt(int(df_prev_mois['yhat'].mean()))} FCFA/mois**  •  "
-        f"Seuil stock (mois le plus chargé) : **{_fmt(int(df_prev_mois['yhat_upper'].max()))} FCFA** (borne haute)"
+        f"Borne haute du mois le plus chargé : "
+        f"**{_fmt(int(df_prev_mois['yhat_upper'].max()))} FCFA**  \n"
+        "L'intervalle mensuel est reconstruit en √n à partir des bornes journalières "
+        "(erreurs journalières supposées peu corrélées), et non par simple addition, "
+        "qui le surestimerait d'environ un facteur 5."
     )
 
     # WCAG 1.1.1 — alternative textuelle au graphique de prévision
