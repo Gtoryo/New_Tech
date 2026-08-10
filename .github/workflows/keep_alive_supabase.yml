@@ -8,7 +8,11 @@ name: Keep-alive Supabase
 
 on:
   schedule:
-    # jours 1, 5, 9, 13, 17, 21, 25, 29 -> ecart maximal de 3 jours
+    # Jours 1, 5, 9, 13, 17, 21, 25, 29 de chaque mois. L'ecart entre deux
+    # executions est de 4 jours a l'interieur du mois, et de 2 a 5 jours au
+    # passage d'un mois a l'autre selon sa longueur (le pire cas est fevrier :
+    # 25 fevrier -> 1er mars, soit 5 jours en annee bissextile). Tous les cas
+    # restent sous la fenetre de mise en veille de 7 jours de Supabase.
     - cron: '0 6 */4 * *'
   workflow_dispatch:
 

@@ -71,8 +71,15 @@ utilisateurs, l'outillage à maintenir dépassait le bénéfice attendu.
 reproductibilité repose désormais sur `runtime.txt` (Python 3.11 partout) et sur
 des fichiers de dépendances distincts par cible. La leçon dépasse la décision :
 l'architecture avait été dimensionnée sur ce que je voulais apprendre, pas sur ce
-que la PME allait réellement utiliser. Docker reste néanmoins présent, sous forme
-de conteneur jetable, pour les tests d'intégration (cf. ADR-05).
+que la PME allait réellement utiliser.
+
+**Portée de la décision.** Elle vise la conteneurisation de l'**application** :
+image à construire, registry à maintenir, orchestration, exposition de ports.
+Elle ne vise pas la base de test éphémère des tests d'intégration (cf. ADR-05),
+déclarée en cinq lignes de YAML et fournie puis détruite par GitHub Actions.
+Aucun moteur de conteneurs n'est installé sur un poste de développement, aucune
+image n'est construite ni publiée, et le projet ne dépend d'aucun runtime de
+conteneur pour être exécuté, déployé ou repris.
 
 ### ADR-03 — Précalculer les prévisions en base plutôt que charger le modèle à la demande
 
@@ -121,7 +128,7 @@ refermerait cette seconde porte.
 Elles sont restées longtemps à 0 % de couverture, faute de méthode.
 
 **Options.** (a) Rabattre les tests sur SQLite. (b) Simuler l'engine SQLAlchemy.
-(c) Un PostgreSQL éphémère, en conteneur local et en service GitHub Actions.
+(c) Un PostgreSQL éphémère, déclaré comme service du job GitHub Actions.
 
 **Décision.** Option (c). L'option (a) reposait sur une hypothèse fausse — SQLite
 supporte `ON CONFLICT` depuis la 3.24 et `RETURNING` depuis la 3.35, et les

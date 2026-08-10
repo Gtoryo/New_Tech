@@ -116,7 +116,16 @@ New_Tech/
 ├── requirements.txt            # Dépendances runtime (Streamlit, Plotly, httpx…)
 ├── requirements-train.txt      # Dépendances CI (+ Prophet, pytest)
 ├── requirements-api.txt        # Dépendances API Render (FastAPI, sans pandas)
+├── ruff.toml                   # Configuration de l'analyse statique (PEP 8, imports)
 ├── variable.env                # Variables d'environnement locales (non commité)
+│
+├── sql/                        # Schéma exécutable, idempotent, fidèle à la production
+│   ├── 01_schemas.sql          # Les trois schémas logiques
+│   ├── 02_tables.sql           # Tables, types bornés, contraintes et index
+│   └── 03_contraintes_unicite.sql # Index uniques sur LOWER(...) — requis par l'API
+│
+├── generated_data/
+│   └── generate_data.py        # Générateur du jeu de travail (graines fixes)
 │
 ├── src/                        # Pipeline ETL — couches séparées
 │   ├── db.py                   # Fabrique de moteur SQLAlchemy partagée (DRY)
@@ -128,7 +137,8 @@ New_Tech/
 ├── model/
 │   ├── train.py                # Entraînement Prophet + push prévisions en BDD
 │   ├── predict.py              # Client API — GET prévisions (httpx + cache Streamlit)
-│   └── evaluate.py             # Cross-validation MAE/MAPE/Coverage (évaluation)
+│   ├── evaluate.py             # Cross-validation MAE/MAPE/Coverage + RelMAE
+│   └── monitor.py              # Surveillance de dérive après réentraînement
 │
 ├── models/                     # Modèles sérialisés (.pkl) — versionnés dans Git
 │   ├── prophet_global.pkl
@@ -152,15 +162,17 @@ New_Tech/
 │   ├── login.py                # Page d'authentification (bcrypt)
 │   └── saisie.py               # Onglet saisie — client API (httpx POST)
 │
-├── data/                       # Sources Excel (non commitées)
+├── data/                       # Jeu de travail synthétique — versionné volontairement
 │   ├── ventes_historiques.xlsx
 │   ├── depenses_et_achats.xlsx
 │   └── suivi_clients_prospects.xlsx
 │
-├── tests/                      # Suite de tests automatisés
-│   ├── test_transform.py       # 34 tests unitaires ETL
-│   ├── test_api.py             # 16 tests d'intégration API (sans base de données)
-│   └── test_model.py           # 11 tests unitaires Prophet
+├── tests/                      # Suite de tests automatisés — 103 tests
+│   ├── test_transform.py       # 36 unitaires — couche Transform
+│   ├── test_api.py             # 29 d'intégration API (sans base de données)
+│   ├── test_model.py           # 14 unitaires — entraînement Prophet
+│   ├── test_dashboard.py       # 8 unitaires — agrégation mensuelle des prévisions
+│   └── test_integration_pipeline.py # 16 d'intégration ETL sur PostgreSQL
 │
 ├── info_projet/                # Documentation de cadrage
 │   ├── MPR.md                  # Rapport de cadrage métier (contexte + vision)
@@ -168,6 +180,7 @@ New_Tech/
 │
 └── .github/
     └── workflows/
+        ├── tests.yml               # Lint + suite complète à chaque push et PR
         ├── retrain_prophet.yml     # Workflow CI/CD — réentraînement mensuel
         └── keep_alive_supabase.yml # Ping tous les 4 jours — évite la mise en veille
 ```
@@ -177,6 +190,8 @@ New_Tech/
 ## 5. Schéma de base de données
 
 La base de données est organisée en **trois schémas PostgreSQL étanches**, chacun ayant une responsabilité unique dans le cycle de vie de la donnée.
+
+> **`sql/` décrit la production à l'identique.** Les types, longueurs, obligatoriété, valeurs par défaut, contraintes d'unicité et index ont été relevés sur l'instance Supabase en service, puis recopiés dans `sql/02_tables.sql`. Un repreneur qui applique les trois fichiers sur une base vierge obtient exactement le schéma qui tourne — et non une variante permissive dans laquelle une donnée refusée en production passerait sans bruit. La conformité est vérifiable : comparer `information_schema.columns` et `pg_constraint` entre les deux bases donne 82 colonnes, 25 contraintes et 3 index identiques.
 
 ### `schema_brut` — Archive des données brutes
 
@@ -192,16 +207,20 @@ Reçoit les données Excel à l'état natif, sans transformation. Permet de rejo
 
 Données nettoyées, normalisées en 3NF, alimentant le tableau de bord Streamlit.
 
-| Table | Colonnes principales |
-|---|---|
-| `client` | `id_client`, `nom_client`, `entreprise`, `telephone`, `email`, `ville` |
-| `employe` | `id_employe`, `nom_employe` |
-| `service` | `id_service`, `libelle` (Sérigraphie, Imprimerie, Vidéosurveillance, Maintenance) |
-| `facture` | `id_facture`, `date_facture`, `statut_paiement`, `id_client` FK, `id_employe` FK |
-| `ligne_facture` | `description`, `quantite`, `prix_unitaire`, `total_ligne`, `id_facture` FK, `id_service` FK |
-| `fournisseur` | `id_fournisseur`, `nom` |
-| `categorie_achat` | `id_categorie`, `libelle` |
-| `achat` | `date_achat`, `libelle_article`, `quantite`, `prix_achat_total`, `mode_paiement`, `id_fournisseur` FK, `id_categorie` FK |
+| Table | Colonnes principales | Contrainte notable |
+|---|---|---|
+| `client` | `id_client` PK, `nom_client` (150), `entreprise` (150), `telephone` (20), `email` (100), `ville` (100) | unique sur `LOWER(nom_client)` |
+| `employe` | `id_employe` PK, `nom_employe` (150) | unique sur `LOWER(nom_employe)` |
+| `service` | `id_service` PK, `libelle` (50) — Sérigraphie, Imprimerie, Vidéosurveillance, Maintenance | `UNIQUE (libelle)` |
+| `facture` | `id_facture` (20) PK, `date_facture`, `statut_paiement` (20), `id_client` FK, `id_employe` FK | `id_employe` **nullable** — 4 % des factures n'ont pas d'employé assigné |
+| `ligne_facture` | `id_ligne` PK, `description` (255), `quantite`, `prix_unitaire`, `total_ligne`, `id_facture` FK, `id_service` FK | `prix_unitaire` **nullable** — 90 lignes sans prix unitaire renseigné |
+| `fournisseur` | `id_fournisseur` PK, `nom` (150) | `UNIQUE (nom)` |
+| `categorie_achat` | `id_categorie` PK, `libelle` (50) | `UNIQUE (libelle)` |
+| `achat` | `id_achat` PK, `date_achat`, `libelle_article` (255), `quantite`, `prix_achat_total`, `mode_paiement` (30), `id_fournisseur` FK, `id_categorie` FK | seul `mode_paiement` est nullable |
+
+Les longueurs entre parenthèses sont les bornes `VARCHAR`. Elles ne sont pas décoratives : les contrats Pydantic de l'API portent les **mêmes** limites (`api/schemas.py`), de sorte qu'une saisie hors gabarit est rejetée en `422` avec le nom du champ fautif, au lieu de partir en base et de revenir en erreur serveur.
+
+Les montants sont des `INTEGER` : le FCFA n'a pas de subdivision en usage, et le type plafonne à 2 147 483 647, très au-dessus du plus gros montant observé (960 000 FCFA sur une ligne). Les cumuls ne débordent pas davantage, PostgreSQL promouvant `SUM(INTEGER)` en `BIGINT`.
 
 ### `schema_ia` — Séries temporelles pour Prophet
 
@@ -209,9 +228,11 @@ Données agrégées au format natif Prophet (`ds` = date, `y` = valeur), aliment
 
 | Table | Colonnes | Description |
 |---|---|---|
-| `serie_ventes_journalieres` | `id_serie`, `ds`, `y`, `nb_commandes`, `rafraichi_le` | CA global par jour |
-| `serie_ventes_par_service` | `id_serie`, `ds`, `service`, `y`, `nb_commandes`, `rafraichi_le` | CA par jour et par pôle d'activité |
-| `previsions_prophet` | `id`, `service`, `ds`, `yhat`, `yhat_lower`, `yhat_upper`, `genere_le` | Prévisions 180 jours (lues par l'API) |
+| `serie_ventes_journalieres` | `id_serie`, `ds`, `y`, `nb_commandes`, `rafraichi_le` | CA global par jour — `UNIQUE (ds)` |
+| `serie_ventes_par_service` | `id_serie`, `ds`, `y`, `service`, `nb_commandes`, `rafraichi_le` | CA par jour et par pôle — `UNIQUE (ds, service)` |
+| `previsions_prophet` | `id`, `service`, `ds`, `yhat`, `yhat_lower`, `yhat_upper`, `genere_le` | Prévisions 180 jours (lues par l'API) — index sur `(service, ds)` |
+
+Les deux contraintes d'unicité sur `ds` verrouillent la propriété que produit l'agrégation SQL : une observation par jour, une par couple jour-pôle. Un `GROUP BY` altéré par mégarde dupliquerait des dates, Prophet s'entraînerait sur une série gonflée, et rien ne le signalerait.
 
 ---
 
@@ -274,7 +295,9 @@ python generated_data/generate_data.py
 | `depenses_et_achats.xlsx` | 401 | 8 montants négatifs, 8 lignes vides |
 | `suivi_clients_prospects.xlsx` | 47 | 6 variantes orthographiques de « Pointe-Noire », doublons en casse mixte |
 
-> Les volumes, saisonnalités et gammes de prix sont calibrés sur l'activité du pôle Imprimerie & Sérigraphie telle qu'observée pendant le stage. Les taux d'anomalies ci-dessus sont ceux du jeu livré, mesurables directement sur les fichiers.
+> Les volumes, saisonnalités et gammes de prix sont calibrés sur l'activité du pôle Imprimerie & Sérigraphie telle qu'observée pendant le stage. Les taux d'anomalies ci-dessus sont ceux du jeu livré, mesurables directement sur les fichiers — ce sont aussi, par construction, les paramètres d'injection du générateur : ce ne sont pas les résultats d'un diagnostic statistique sur un export de production.
+
+> **Une limitation du générateur, assumée.** Le tirage de la forme du montant non calculé (`0`, `999` ou valeur absente) est évalué une seule fois pour l'ensemble des lignes concernées, et non ligne par ligne. Avec la graine fixée à 42, il tombe sur `0` : le jeu livré ne porte donc que cette forme. Les deux autres restent traitées par `_SENTINELLES_TOTAL` (`src/transform.py`) au titre de la programmation défensive et couvertes par `tests/test_transform.py` sur des DataFrames construits pour l'occasion. Le comportement n'est pas corrigé : régénérer le jeu déplacerait chaque métrique publiée dans le rapport et romprait l'ancrage au tag `metriques-rapport-v1`.
 
 ### Exécution
 
@@ -330,7 +353,7 @@ python model/evaluate.py
 
 1. **MAE / MAPE / Coverage par horizon** (30, 60 et 90 jours) ;
 2. **Erreur selon la granularité de décision** — l'erreur est recalculée après agrégation des prévisions au jour, à la semaine et au mois. Le MAPE journalier, élevé du fait de la forte dispersion de la série, chute fortement une fois les prévisions agrégées : c'est à l'échelle hebdomadaire et mensuelle, celle à laquelle les réapprovisionnements sont décidés, que la prévision est réellement exploitable ;
-3. **Comparaison à des prévisions de référence (MASE)** — Prophet est confronté à un naïf saisonnier (J-7) et à la moyenne historique glissante, sur les mêmes points de coupure. Un MAPE lu isolément ne dit rien de la valeur ajoutée d'un modèle ; un MASE inférieur à 1 établit qu'il capture une structure que la prévision naïve ne reproduit pas ;
+3. **Comparaison à des prévisions de référence (RelMAE)** — Prophet est confronté à un naïf saisonnier (J-7) et à la moyenne de l'historique disponible, sur les mêmes points de coupure et **à information strictement égale** : les deux références sont bornées aux observations antérieures au point de coupure, comme le modèle. Un MAPE lu isolément ne dit rien de la valeur ajoutée d'un modèle ; un RelMAE inférieur à 1 établit qu'il capture une structure que la prévision naïve ne reproduit pas. La mesure est un RelMAE (*relative mean absolute error*) et non le MASE d'Hyndman & Koehler (2006), qui met l'erreur à l'échelle de l'erreur naïve calculée **dans l'échantillon d'entraînement** : même interprétation du seuil, dénominateur différent ;
 4. **Comparaison de `changepoint_prior_scale`** (0.01 / 0.05 / 0.50) — la valeur 0.05 retenue minimise le MAPE.
 
 ### Reproduire les métriques publiées dans le rapport
@@ -341,12 +364,14 @@ Les modèles sont réentraînés le 1er de chaque mois par GitHub Actions : les 
 # Restaure les modèles sur lesquels les métriques du rapport ont été mesurées
 git checkout metriques-rapport-v1 -- models/
 
-python model/evaluate.py    # sections 4.3 du rapport
+python model/evaluate.py    # section 4.3 du rapport
 python model/monitor.py     # section 5.2 du rapport
 
 # Revenir aux modèles courants
 git checkout HEAD -- models/
 ```
+
+> Le tag épingle les **modèles**, pas les scripts : une correction apportée à `evaluate.py` ou `monitor.py` change légitimement les valeurs produites sur ces mêmes modèles. C'est arrivé une fois, et le rapport en tient compte — voir la note de méthode de la section 4.3 sur le bornage des prévisions de référence au point de coupure.
 
 Les deux scripts fixent la graine du générateur aléatoire (`SEED = 42`) : Prophet échantillonnant les bornes d'intervalle via le générateur global de numpy, deux exécutions sur les mêmes modèles produisent sans cela des valeurs de coverage différentes. Avec la graine, les chiffres sont strictement reproductibles.
 
@@ -368,9 +393,11 @@ L'API constitue la **couche de service** entre l'interface Streamlit et la base 
 | Méthode | Endpoint | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | Non | Health-check (supervision, réveil de l'instance Render) |
-| GET | `/api/v1/previsions/{service}` | Non | Prévisions Prophet pré-calculées (`global`, `Imprimerie`, `Sérigraphie`, `Maintenance`, `Vidéosurveillance`) |
+| GET | `/api/v1/previsions/{service}` | `X-API-Key` | Prévisions Prophet pré-calculées (`global`, `Imprimerie`, `Sérigraphie`, `Maintenance`, `Vidéosurveillance`) |
 | POST | `/api/v1/commandes/` | `X-API-Key` | Enregistre une commande — transaction atomique : upsert client + upsert employé + insertion facture + ligne_facture |
-| GET | `/api/v1/kpis/` | Non | CA total, nombre de commandes, CA moyen journalier, pôle leader |
+| GET | `/api/v1/kpis/` | `X-API-Key` | CA total, nombre de commandes, CA moyen journalier, pôle leader |
+
+> **Lecture et écriture sont authentifiées de la même façon.** Les prévisions de chiffre d'affaires et les KPI agrégés sont des données commerciales : les exposer en lecture libre reviendrait à publier l'activité de la PME à qui connaît l'URL de l'instance, ce que l'OWASP API Security Top 10 classe en **API2:2023 — Broken Authentication**. Seul `/health` reste ouvert, puisque sa fonction est d'être interrogeable sans identification.
 
 Les contrats d'entrée/sortie sont définis par des modèles **Pydantic** (`api/schemas.py`) : validation automatique des types et des valeurs (`Literal` sur les libellés de service), réponse `422` en cas de payload invalide, documentation OpenAPI auto-générée.
 
@@ -395,7 +422,7 @@ uvicorn api.main:app --reload
 
 ### Sécurité de l'API
 
-- **Authentification** : l'endpoint d'écriture exige une clé secrète dans l'en-tête `X-API-Key`, vérifiée **en temps constant** (`secrets.compare_digest`) contre la variable d'environnement `API_SECRET_KEY` — clé stockée dans les variables Render côté serveur et les secrets Streamlit côté client.
+- **Authentification** : tous les endpoints métier — écriture comme lecture — exigent une clé secrète dans l'en-tête `X-API-Key`, vérifiée **en temps constant** (`secrets.compare_digest`) contre la variable d'environnement `API_SECRET_KEY` — clé stockée dans les variables Render côté serveur et les secrets Streamlit côté client. La dépendance FastAPI (`Depends(verifier_cle_api)`) s'exécute avant toute logique métier : une requête sans clé est rejetée en `401`, pas en `422`.
 - **CORS** : origines restreintes à l'URL Streamlit Cloud de production, méthodes limitées à GET/POST.
 - **Messages d'erreur non divulgants** : aucun détail technique n'est renvoyé au client. Les exceptions de la couche d'accès aux données sont journalisées côté serveur via `logger.exception` et la réponse HTTP ne contient qu'un message générique — un message SQLAlchemy brut exposerait sinon le schéma, les tables, la requête émise et parfois l'hôte de la base (OWASP API8:2023 — Security Misconfiguration).
 - **Écritures atomiques** : l'enregistrement d'une commande s'exécute dans une transaction unique (`engine.begin()`), et les upserts client/employé s'appuient sur `INSERT … ON CONFLICT … RETURNING` adossé aux index uniques `ux_client_nom_lower` et `ux_employe_nom_lower`. Deux saisies concurrentes pour un même client inconnu ne peuvent donc pas créer de doublon.
@@ -437,7 +464,15 @@ Le workflow `.github/workflows/retrain_prophet.yml` s'exécute automatiquement *
 6. Agrégation schema_analytics → schema_ia (intègre les commandes saisies via l'API)
 7. Réentraînement Prophet + push des prévisions en BDD
 8. Commit automatique des modèles .pkl mis à jour
+9. Surveillance de la dérive (model/monitor.py) — qualifie la publication, ne la bloque pas
 ```
+
+> **Pourquoi l'étape 9 après le commit et non avant ?** Sur une structure de cette taille, mieux vaut
+> des prévisions dégradées et signalées que pas de prévisions du tout : le Directeur conserve une
+> projection, et l'exploitant sait qu'elle mérite un regard. Le contrôle qualifie la publication.
+> Un dépassement de seuil sur le modèle **global** passe le run au rouge et déclenche la notification
+> GitHub ; sur un modèle **par pôle**, il n'émet qu'un avertissement — ces séries sont plus courtes et
+> plus bruitées, un dépassement isolé n'y vaut pas arrêt du système.
 
 > **Pourquoi l'étape 6 et pas le pipeline ETL complet ?** `charger_analytics()` vide les tables
 > (`TRUNCATE ... CASCADE`) avant de les recharger depuis les fichiers Excel. Exécuter `main.py`
@@ -454,12 +489,26 @@ n'ayant lieu qu'une fois par mois, la base serait systématiquement endormie au 
 se déclenche — le job du 01/08/2026 a échoué ainsi, sur un `FATAL (ENOTFOUND) tenant/user not found`
 renvoyé par le pooler.
 
-`keep_alive_supabase.yml` exécute un `SELECT 1` **tous les 4 jours** (jours 1, 5, 9… du mois, soit un
-écart maximal de 3 jours). Le dashboard Streamlit et l'API Render, qui lisent la même base, en
+`keep_alive_supabase.yml` exécute un `SELECT 1` **tous les 4 jours** (jours 1, 5, 9… 29 du mois).
+L'écart est de 4 jours à l'intérieur du mois, et de 2 à 5 jours au passage d'un mois à l'autre selon
+sa longueur — le pire cas étant février, du 25 au 1er mars. Tous ces cas restent sous la fenêtre de
+mise en veille de 7 jours. Le dashboard Streamlit et l'API Render, qui lisent la même base, en
 bénéficient également.
 
 > **Attention :** GitHub désactive les workflows planifiés après 60 jours sans activité dans le dépôt.
 > Passé ce délai, le keep-alive s'arrête et le projet Supabase repart en veille.
+
+### Troisième workflow — `tests.yml`
+
+Le réentraînement mensuel valide le code avant d'écrire en base, mais une régression poussée le 3 du
+mois ne serait détectée que le 1er du suivant. `tests.yml` ramène ce délai à quelques minutes : à
+chaque push sur `main` et à chaque pull request, il exécute l'analyse statique (`ruff check .`), puis
+la suite complète — avec un **service PostgreSQL éphémère** qui permet aux 16 tests d'intégration du
+pipeline de s'exécuter — et publie les deux rapports de couverture, sur `src/` et sur `api/`.
+
+L'analyse statique est placée **avant** les tests : une erreur de style ou un import mort se détecte
+en quelques secondes, là où la suite complète demande plusieurs minutes, compilation de CmdStan
+comprise.
 
 ---
 
@@ -471,7 +520,8 @@ bénéficient également.
 | Gestion des secrets | `variable.env` local (hors dépôt) + GitHub Secrets (CI) + Streamlit Secrets + variables Render (prod) |
 | Hachage des mots de passe | `bcrypt` — les mots de passe ne sont jamais stockés en clair |
 | Authentification application | Page de login obligatoire avant tout accès, contrôle d'accès par rôle (directeur / gestionnaire) |
-| Authentification API | Clé `X-API-Key` vérifiée en temps constant (`secrets.compare_digest`) sur l'endpoint d'écriture |
+| Authentification API | Clé `X-API-Key` vérifiée en temps constant (`secrets.compare_digest`) sur **tous les endpoints métier**, lecture comprise — seul `/health` reste ouvert |
+| Anti-énumération des comptes | Le login vérifie systématiquement un hash bcrypt, celui d'un leurre de même facteur de coût lorsque l'identifiant n'existe pas : les deux chemins consomment un temps équivalent |
 | CORS | Origines restreintes à l'URL Streamlit Cloud de production |
 | Isolation des schémas | Trois schémas PostgreSQL étanches — aucune requête ne traverse les frontières de schéma |
 
@@ -480,25 +530,44 @@ bénéficient également.
 ## 13. Tests automatisés
 
 ```bash
-# Suite sans infrastructure — 65 tests, les 16 tests d'intégration sont ignorés
+# Analyse statique (PEP 8, imports, pièges courants) — configuration : ruff.toml
+ruff check .
+
+# Suite sans infrastructure — 87 tests, les 16 tests d'intégration sont ignorés
 pytest tests/ -v
 
-# Suite complète — 81 tests, avec un PostgreSQL jetable
-docker run -d --name pg-test -p 55432:5432 \
-    -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=newtech_test postgres:16
-
-NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=55432 DB_USER=test \
+# Suite complète — 103 tests, en faisant pointer les variables DB_* vers
+# n'importe quel PostgreSQL jetable dont le nom de base contient « test »
+NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=5432 DB_USER=test \
 DB_PASSWORD=test DB_NAME=newtech_test DB_SSLMODE=disable pytest tests/ -v
 ```
 
+> **Aucun moteur n'est à installer pour exécuter la suite complète.** Les 16 tests
+> d'intégration ont pour seule dépendance un PostgreSQL jetable, et la voie de
+> référence est le **service déclaré dans `.github/workflows/tests.yml`** : GitHub
+> Actions le démarre avec le job et le détruit à la fin. La suite complète tourne
+> donc à chaque push, et les deux rapports de couverture y sont publiés.
+>
+> Cela ne contredit pas l'arbitrage documenté en ADR-02 (*Renoncer à Docker*), qui
+> porte sur la **conteneurisation de l'application** : image à construire, registry
+> à maintenir, orchestration et exposition de ports. Ici, rien de tout cela — une
+> base de test déclarée en cinq lignes de YAML, fournie et détruite par la
+> plateforme d'intégration continue. La commande ci-dessus n'est qu'une commodité
+> pour qui dispose déjà d'un PostgreSQL local.
+
 | Fichier | Tests | Ce qui est vérifié |
 |---|---|---|
-| `tests/test_transform.py` | 35 | `parser_date` (4 formats), `normaliser_service`, `normaliser_ville`, `transformer_ventes` (doublons, recalcul des trois formes de montant non calculé), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
-| `tests/test_api.py` | 16 | **Intégration API** — routage, authentification `X-API-Key` (401 sur clé absente ou invalide), validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base |
+| `tests/test_transform.py` | 36 | `parser_date` (4 formats), `normaliser_service`, `normaliser_ville`, `transformer_ventes` (doublons, recalcul des trois formes de montant non calculé — sentinelle `0`, sentinelle `999`, valeur absente — sur des DataFrames construits pour l'occasion, le jeu de travail versionné ne portant que la forme `0`), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
+| `tests/test_api.py` | 29 | **Intégration API** — routage, authentification `X-API-Key` sur l'écriture **et sur les deux endpoints de lecture** (401 sur clé absente ou invalide), ouverture maintenue de `/health`, validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, **bornes de longueur alignées sur les colonnes VARCHAR** (422 au-delà, accepté à la limite exacte), exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base |
 | `tests/test_model.py` | 14 | `slugify`, entraînement Prophet end-to-end, colonnes de sortie, horizon 180 jours, écrêtage à zéro des prévisions négatives |
+| `tests/test_dashboard.py` | 8 | Agrégation mensuelle des prévisions — la prévision centrale s'additionne, la demi-largeur de l'intervalle croît en **√n** et non linéairement (test de non-régression explicite contre la somme des bornes), écrêtage à zéro de la borne basse, écartement des mois partiels en bord d'horizon |
 | `tests/test_integration_pipeline.py` | 16 | **Intégration ETL sur PostgreSQL** — intégrité référentielle après résolution des clés étrangères, préservation des anomalies dans `schema_brut`, idempotence du rechargement et de l'agrégation, conservation du chiffre d'affaires entre `schema_analytics` et `schema_ia`, `COUNT(DISTINCT)` sur les factures |
 
-**Couverture mesurée** (`pytest --cov`) : **99 %** sur `src/` — `extract`, `load` et `db` à 100 %, `aggregate` à 97 %, `transform` à 99 % — et **66 %** sur `api/`, dont 100 % sur `auth`, `schemas` et `main`.
+**Couverture mesurée** (`pytest --cov`) : **99 %** sur `src/` (262 instructions, 261 couvertes) — `transform`, `extract`, `load` et `db` à **100 %**, `aggregate` à 97 % — et **69 %** sur `api/` (126 instructions, 87 couvertes), dont 100 % sur `auth`, `schemas` et `main`.
+
+La seule ligne non couverte de `src/` est l'appel `alimenter_series()` du garde `if __name__ == "__main__"` de `src/aggregate.py` : c'est le point d'entrée en ligne de commande, invoqué par le workflow de réentraînement (`python src/aggregate.py`) et non par pytest. Les taux plus faibles des modules de routes correspondent aux corps de requêtes SQL, qui ne s'exécutent que face à une base réelle : les cas couverts ici sont ceux rejetés en amont de toute requête (401, 422).
+
+Les deux rapports sont republiés à chaque exécution du workflow `tests.yml`, ce qui évite qu'ils dérivent du code.
 
 Les couches Extract, Load et Aggregate écrivent toutes en base : leur comportement réel — résolution des clés étrangères, respect des contraintes d'intégrité, idempotence du `TRUNCATE + INSERT`, exactitude des requêtes d'agrégation — ne peut se vérifier que face à un vrai moteur. Elles sont donc testées contre un PostgreSQL éphémère plutôt qu'émulées : un conteneur coûte moins cher qu'une couche d'abstraction, et teste le moteur réellement utilisé en production.
 
@@ -516,8 +585,11 @@ Les couches Extract, Load et Aggregate écrivent toutes en base : leur comportem
 | **Endpoint `/historique`** | Raccorder `dashboard.py` à l'API pour éliminer le dernier accès SQL direct depuis l'interface | Faible |
 | **Alertes automatiques** | Notifier le Directeur par email (SMTP) quand les prévisions détectent un risque de rupture de stock | Faible |
 | **Saisie multi-lignes** | Permettre plusieurs prestations sur une même facture — `ligne_facture` le supporte déjà, l'évolution porte sur le contrat `CommandeIn` et l'ergonomie du formulaire (aucune modification du schéma) | Faible |
-| **Test de round-trip ETL** | Compléter les tests d'intégration existants (API) par un test de bout en bout Extract → Transform → Load → Aggregate contre une base PostgreSQL de test dédiée | Moyenne |
-| **Monitoring du modèle** | Mesurer la dérive du modèle (MAE, MAPE) après chaque réentraînement mensuel et logger les métriques en base | Moyenne |
+| **Surveillance du volume saisi** | `model/monitor.py` mesure la qualité des prévisions, pas celle des données entrantes : un effondrement du nombre de commandes enregistrées ne déclencherait aucune alerte. La colonne `nb_commandes` de `schema_ia` porte déjà l'information | Faible |
+| **RelMAE lissé sur trois fenêtres** | La surveillance repose sur une fenêtre de validation unique : un mois atypique suffit à faire varier l'indicateur sans dérive réelle. Une moyenne glissante sur les trois dernières fenêtres donnerait un signal plus stable | Faible |
+| **Destinataire interne des alertes** | Les notifications d'échec GitHub Actions n'atteignent aujourd'hui que l'auteur du dépôt ; elles doivent être redirigées vers l'entreprise à la reprise du projet | Faible |
+| **Réactivation des workflows planifiés** | GitHub Actions désactive les workflows `schedule` après 60 jours sans activité sur le dépôt. Sans commit ni réactivation manuelle, le réentraînement mensuel s'arrête de lui-même : à documenter dans la notice de reprise | Faible |
+| **Tests d'interface (Playwright)** | La suite couvre la logique métier, pas le rendu : une régression Plotly viderait un graphique sans qu'aucun test ne le signale | Moyenne |
 | **Git LFS / DVC** | Délocaliser les artefacts binaires `.pkl` hors de l'historique Git tout en conservant la traçabilité des versions | Faible |
 
 ---
