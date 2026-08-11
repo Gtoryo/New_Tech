@@ -177,6 +177,31 @@ class TestTransformerVentes:
         # Les 3 premiers sont recalculés, le 4e (déjà cohérent) est conservé
         assert totaux == [10000.0, 12000.0, 6000.0, 9000.0]
 
+    def test_statuts_ramenes_au_referentiel_de_l_api(self):
+        # Les classeurs portent « En attente », que le contrat CommandeIn
+        # (api/schemas.py) n'admet pas. Sans normalisation, la colonne
+        # statut_paiement mélangerait deux vocabulaires selon la voie
+        # d'écriture, et la contrainte ck_facture_statut rejetterait le
+        # chargement.
+        # La 4e ligne, sans statut, vérifie que l'absence de valeur traverse en
+        # None plutôt qu'en chaîne « nan » : la colonne étant NOT NULL en base,
+        # le chargement doit échouer franchement et non insérer un faux statut.
+        df = pd.DataFrame({
+            "Date":              ["15/06/2024", "16/06/2024", "17/06/2024", "18/06/2024"],
+            "Client":            ["A",          "B",          "C",          "D"],
+            "Telephone":         ["01",         "02",         "03",         "04"],
+            "Service_Type":      ["imprimerie"] * 4,
+            "Employe_En_Charge": ["Alice"] * 4,
+            "Facture_ID":        ["F1",         "F2",         "F3",         "F4"],
+            "Prix_Unitaire":     [5000,         3000,         2000,         1000],
+            "Quantite":          [1,            1,            1,            1],
+            "Total":             [5000,         3000,         2000,         1000],
+            "Statut_Paiement":   ["En attente", "Payé",       "Partiel",    None],
+            "Description":       ["x"] * 4,
+        })
+        statuts = transformer_ventes(df)["factures"]["statut_paiement"].tolist()
+        assert statuts == ["Non payé", "Payé", "Partiel", None]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # transformer_depenses

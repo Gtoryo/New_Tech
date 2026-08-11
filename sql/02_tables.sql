@@ -112,10 +112,26 @@ CREATE TABLE IF NOT EXISTS schema_analytics.service (
 -- n'est pas toujours renseigné à la saisie — 113 factures du jeu de travail sur
 -- 2 859, environ une sur vingt-cinq, n'en portent aucun. La facture reste
 -- légitime, son chiffre d'affaires compte, seul le lien vers employe manque.
+--
+-- statut_paiement porte une contrainte de domaine, et c'est la seule colonne
+-- de la base à en avoir besoin. Les trois libellés sont ceux du type Literal du
+-- contrat CommandeIn (api/schemas.py). Deux voies d'ecriture alimentent cette
+-- colonne : l'API, contrainte par Pydantic, et le pipeline ETL, dont les
+-- classeurs sources portent un quatrieme libelle (« En attente ») de meme sens
+-- que « Non paye ». src/transform.py le ramene au referentiel via _MAP_STATUT ;
+-- la contrainte ci-dessous garantit qu'aucune divergence future ne passe.
+-- Sur une base creee avant cette contrainte, appliquer une fois :
+--     UPDATE schema_analytics.facture
+--        SET statut_paiement = 'Non paye' WHERE statut_paiement = 'En attente';
+--     ALTER TABLE schema_analytics.facture ADD CONSTRAINT ck_facture_statut
+--         CHECK (statut_paiement IN ('Paye', 'Non paye', 'Partiel'));
+-- (en retablissant les accents, retires ici pour rester lisible en commentaire).
 CREATE TABLE IF NOT EXISTS schema_analytics.facture (
     id_facture      VARCHAR(20) PRIMARY KEY,
     date_facture    DATE        NOT NULL,
-    statut_paiement VARCHAR(20) NOT NULL,
+    statut_paiement VARCHAR(20) NOT NULL
+                    CONSTRAINT ck_facture_statut
+                    CHECK (statut_paiement IN ('Payé', 'Non payé', 'Partiel')),
     id_client       INTEGER     NOT NULL REFERENCES schema_analytics.client (id_client),
     id_employe      INTEGER              REFERENCES schema_analytics.employe (id_employe)
 );

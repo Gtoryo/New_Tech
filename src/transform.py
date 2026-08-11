@@ -40,6 +40,23 @@ _MAP_SERVICE = {
     "maint.":            "Maintenance",
 }
 
+# Statuts de paiement ramenés au référentiel contrôlé de l'API. Le contrat
+# CommandeIn (api/schemas.py) n'admet que trois libellés — Payé, Non payé,
+# Partiel — là où les classeurs en portent un quatrième, « En attente », de même
+# sens que « Non payé ». Sans cette table, schema_analytics.facture accumulerait
+# deux vocabulaires selon la voie d'écriture, pipeline ETL ou API, que plus rien
+# ne réconcilierait ensuite. La contrainte ck_facture_statut (sql/02_tables.sql)
+# verrouille le résultat côté base.
+_MAP_STATUT = {
+    "payé":      "Payé",
+    "paye":      "Payé",
+    "non payé":  "Non payé",
+    "non paye":  "Non payé",
+    "en attente":"Non payé",
+    "impayé":    "Non payé",
+    "partiel":   "Partiel",
+}
+
 # Variantes connues de "Pointe-Noire" à normaliser
 _VARIANTES_PN = {"pointe noire", "pn", "pte-noire", "pointenoire",
                  "pointe-noire", "p.noire"}
@@ -112,6 +129,14 @@ def _normaliser_service(valeur) -> str | None:
     return _MAP_SERVICE.get(cle, str(valeur).strip())
 
 
+def _normaliser_statut(valeur) -> str | None:
+    """Ramène un statut de paiement au référentiel contrôlé de l'API."""
+    if pd.isna(valeur):
+        return None
+    cle = str(valeur).strip().lower()
+    return _MAP_STATUT.get(cle, str(valeur).strip())
+
+
 def _normaliser_ville(valeur) -> str | None:
     """Normalise les variantes orthographiques de 'Pointe-Noire'."""
     if pd.isna(valeur):
@@ -144,8 +169,12 @@ def transformer_ventes(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     # ── ÉTAPE 1 : Parsage des dates ──────────────────────────────────────────
     df["date_facture"] = df["Date"].apply(_parser_date)
 
-    # ── ÉTAPE 2 : Normalisation du type de service ───────────────────────────
+    # ── ÉTAPE 2 : Normalisation des libellés à référentiel contrôlé ──────────
+    # Service et statut de paiement sont les deux champs que l'API contraint par
+    # un type Literal. Le pipeline doit produire le même vocabulaire, sans quoi
+    # les deux voies d'écriture divergent dans la même colonne.
     df["service"] = df["Service_Type"].apply(_normaliser_service)
+    df["Statut_Paiement"] = df["Statut_Paiement"].apply(_normaliser_statut)
 
     # ── ÉTAPE 3 : Suppression des lignes sans date ni client ─────────────────
     # Ces lignes sont inutilisables : impossible de les rattacher à une facture
