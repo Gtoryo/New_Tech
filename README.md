@@ -167,7 +167,7 @@ New_Tech/
 │   ├── depenses_et_achats.xlsx
 │   └── suivi_clients_prospects.xlsx
 │
-├── tests/                      # Suite de tests automatisés — 103 tests
+├── tests/                      # Suite de tests automatisés — 104 tests
 │   ├── test_transform.py       # 36 unitaires — couche Transform
 │   ├── test_api.py             # 29 d'intégration API (sans base de données)
 │   ├── test_model.py           # 14 unitaires — entraînement Prophet
@@ -533,10 +533,10 @@ comprise.
 # Analyse statique (PEP 8, imports, pièges courants) — configuration : ruff.toml
 ruff check .
 
-# Suite sans infrastructure — 87 tests, les 16 tests d'intégration sont ignorés
+# Suite sans infrastructure — 88 tests, les 16 tests d'intégration sont ignorés
 pytest tests/ -v
 
-# Suite complète — 103 tests, en faisant pointer les variables DB_* vers
+# Suite complète — 104 tests, en faisant pointer les variables DB_* vers
 # n'importe quel PostgreSQL jetable dont le nom de base contient « test »
 NEWTECH_INTEGRATION=1 DB_HOST=localhost DB_PORT=5432 DB_USER=test \
 DB_PASSWORD=test DB_NAME=newtech_test DB_SSLMODE=disable pytest tests/ -v
@@ -557,13 +557,13 @@ DB_PASSWORD=test DB_NAME=newtech_test DB_SSLMODE=disable pytest tests/ -v
 
 | Fichier | Tests | Ce qui est vérifié |
 |---|---|---|
-| `tests/test_transform.py` | 36 | `parser_date` (4 formats), `normaliser_service`, `normaliser_ville`, `transformer_ventes` (doublons, recalcul des trois formes de montant non calculé — sentinelle `0`, sentinelle `999`, valeur absente — sur des DataFrames construits pour l'occasion, le jeu de travail versionné ne portant que la forme `0`), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
+| `tests/test_transform.py` | 37 | `parser_date` (4 formats), `normaliser_service`, `normaliser_ville`, `normaliser_statut`, `transformer_ventes` (doublons, normalisation du statut de paiement, recalcul des trois formes de montant non calculé — sentinelle `0`, sentinelle `999`, valeur absente — sur des DataFrames construits pour l'occasion, le jeu de travail versionné ne portant que la forme `0`), `transformer_depenses` (montants négatifs, déduplication des référentiels), `transformer_clients` (déduplication insensible à la casse, conservation de la casse mixte, normalisation des villes) |
 | `tests/test_api.py` | 29 | **Intégration API** — routage, authentification `X-API-Key` sur l'écriture **et sur les deux endpoints de lecture** (401 sur clé absente ou invalide), ouverture maintenue de `/health`, validation Pydantic (422 sur libellé hors référentiel et contraintes métier), bornes de l'horizon, **bornes de longueur alignées sur les colonnes VARCHAR** (422 au-delà, accepté à la limite exacte), exposition du schéma OpenAPI. Exécutés via `TestClient`, sans serveur ni base |
 | `tests/test_model.py` | 14 | `slugify`, entraînement Prophet end-to-end, colonnes de sortie, horizon 180 jours, écrêtage à zéro des prévisions négatives |
 | `tests/test_dashboard.py` | 8 | Agrégation mensuelle des prévisions — la prévision centrale s'additionne, la demi-largeur de l'intervalle croît en **√n** et non linéairement (test de non-régression explicite contre la somme des bornes), écrêtage à zéro de la borne basse, écartement des mois partiels en bord d'horizon |
 | `tests/test_integration_pipeline.py` | 16 | **Intégration ETL sur PostgreSQL** — intégrité référentielle après résolution des clés étrangères, préservation des anomalies dans `schema_brut`, idempotence du rechargement et de l'agrégation, conservation du chiffre d'affaires entre `schema_analytics` et `schema_ia`, `COUNT(DISTINCT)` sur les factures |
 
-**Couverture mesurée** (`pytest --cov`) : **99 %** sur `src/` (262 instructions, 261 couvertes) — `transform`, `extract`, `load` et `db` à **100 %**, `aggregate` à 97 % — et **69 %** sur `api/` (126 instructions, 87 couvertes), dont 100 % sur `auth`, `schemas` et `main`.
+**Couverture mesurée** (`pytest --cov`) : **99 %** sur `src/` (269 instructions, 268 couvertes) — `transform`, `extract`, `load` et `db` à **100 %**, `aggregate` à 97 % — et **81 %** sur `api/` (126 instructions, 102 couvertes), dont 100 % sur `auth`, `schemas`, `main` et `database`.
 
 La seule ligne non couverte de `src/` est l'appel `alimenter_series()` du garde `if __name__ == "__main__"` de `src/aggregate.py` : c'est le point d'entrée en ligne de commande, invoqué par le workflow de réentraînement (`python src/aggregate.py`) et non par pytest. Les taux plus faibles des modules de routes correspondent aux corps de requêtes SQL, qui ne s'exécutent que face à une base réelle : les cas couverts ici sont ceux rejetés en amont de toute requête (401, 422).
 
