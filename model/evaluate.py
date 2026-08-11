@@ -242,7 +242,61 @@ def metriques_vs_baselines(modele: Prophet, label: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. COMPARAISON changepoint_prior_scale
+# 4. APPORT DE LA COMPOSANTE JOURNALIÈRE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def comparer_daily_seasonality(modele_ref: Prophet) -> pd.DataFrame:
+    """
+    Mesure l'apport de la saisonnalité journalière, désactivée dans la
+    configuration retenue (model/train.py).
+
+    L'argument théorique est simple : les observations sont déjà agrégées par
+    jour, une composante intra-journalière n'a donc aucune variation à
+    modéliser et n'ajoute que des termes de Fourier sans information
+    correspondante. Cette fonction le vérifie au lieu de l'affirmer.
+
+    Même protocole que comparer_changepoint() — horizon de 30 jours, plus
+    discriminant — afin que les deux tableaux se lisent sur la même base. Le
+    MAE et le MAPE ne dépendent que de yhat, déterministe à ajustement donné :
+    la graine ne joue ici que sur les bornes d'intervalle, non reprises.
+    """
+    df_train = modele_ref.history[["ds", "y"]].copy()
+    resultats = []
+
+    for actif in (False, True):
+        print(f"  daily_seasonality={actif} ...", end=" ", flush=True)
+        np.random.seed(SEED)
+        m = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=True,
+            daily_seasonality=actif,
+            changepoint_prior_scale=0.05,
+            stan_backend="CMDSTANPY",
+        )
+        m.fit(df_train)
+
+        df_perf = performance_metrics(
+            cross_validation(
+                m, initial="365 days", period="30 days",
+                horizon="30 days", parallel=None,
+            ),
+            rolling_window=1,
+        )
+        mae_30 = int(df_perf["mae"].mean().round(0))
+        mape_30 = (df_perf["mape"].mean() * 100).round(1)
+        print(f"MAPE 30j = {mape_30} %")
+
+        resultats.append({
+            "daily_seasonality":   actif,
+            "MAE (horizon 30 j)":  mae_30,
+            "MAPE (horizon 30 j)": f"{mape_30} %",
+        })
+
+    return pd.DataFrame(resultats)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. COMPARAISON changepoint_prior_scale
 # ─────────────────────────────────────────────────────────────────────────────
 
 def comparer_changepoint(modele_ref: Prophet) -> pd.DataFrame:
@@ -322,7 +376,13 @@ if __name__ == "__main__":
     df_base = metriques_vs_baselines(modele_global, "global")
     _afficher_df(df_base)
 
-    # ── Tableau 4 : comparaison changepoint_prior_scale ──────────────────────
+    # ── Tableau 4 : apport de la composante journalière ──────────────────────
+    _afficher_titre("APPORT DE LA COMPOSANTE JOURNALIÈRE (daily_seasonality)")
+    print("  Réentraînement de 2 variantes en cours...\n")
+    df_daily = comparer_daily_seasonality(modele_global)
+    _afficher_df(df_daily)
+
+    # ── Tableau 5 : comparaison changepoint_prior_scale ──────────────────────
     _afficher_titre("COMPARAISON changepoint_prior_scale")
     print("  Réentraînement de 3 variantes en cours (peut prendre 2-3 min)...\n")
     df_cp = comparer_changepoint(modele_global)
