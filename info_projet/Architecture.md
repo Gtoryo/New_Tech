@@ -28,7 +28,7 @@ Les données financières d'une entreprise exigeant une confidentialité absolue
 * **Chiffrement :** Utilisation des protocoles HTTPS/TLS pour sécuriser les données en transit entre l'application et les serveurs de la base de données.  
 * **Gestion des Secrets :** Les clés privées et identifiants de connexion ne sont jamais stockés dans le code source — injection via les secrets Streamlit Cloud (interface), les variables d'environnement Render (API) et les GitHub Secrets (CI).  
 * **Protection des accès (Authentification) :** L'accès à l'application web est protégé par une page de Login. Les mots de passe du Directeur et de la Gestionnaire sont hachés à l'aide de l'algorithme `bcrypt` et stockés dans les secrets de la plateforme, empêchant toute lecture en clair même en cas de fuite.  
-* **Sécurisation de l'API :** L'endpoint d'écriture exige une clé secrète dans l'en-tête `X-API-Key`, vérifiée en temps constant côté serveur ; la politique CORS restreint les origines autorisées à l'URL de production Streamlit Cloud.
+* **Sécurisation de l'API :** Tous les endpoints métier, en lecture comme en écriture, exigent une clé secrète dans l'en-tête `X-API-Key`, vérifiée en temps constant côté serveur ; seul `/health` reste ouvert, sa fonction étant d'être interrogeable sans identification. La politique CORS restreint par ailleurs les origines autorisées à l'URL de production Streamlit Cloud : appliquée par le navigateur et non par le serveur, elle relève de la défense en profondeur, le contrôle d'accès effectif reposant sur la clé.
 ---
 
 ## Partie 3 : Décisions d'architecture (ADR)
@@ -142,24 +142,37 @@ immédiatement révélé un comportement non documenté : 4 % des factures n'ont
 employé assigné. Ces tests exécutant des `TRUNCATE`, deux garde-fous indépendants
 refusent leur exécution hors d'une base explicitement jetable.
 
-### ADR-06 — Surveiller la dérive par le MASE et non par le MAPE
+### ADR-06 — Surveiller la dérive par le RelMAE et non par le MAPE
 
 **Contexte.** Le workflow mensuel vérifiait que l'entraînement se terminait sans
 erreur. Un modèle entraîné sur des données dégradées publiait ses prévisions sans
 qu'aucune alerte ne le signale.
 
-**Options.** (a) Seuil sur le MAPE. (b) Seuil sur le MASE, qui rapporte l'erreur
-à celle d'une prévision naïve.
+**Options.** (a) Seuil sur le MAPE. (b) Seuil sur une erreur rapportée à celle
+d'une prévision naïve.
 
 **Décision.** Option (b). Le MAPE n'a pas de valeur de référence absolue sur cette
-série : 130 % y est normal, un seuil serait donc arbitraire. Un MASE supérieur à 1
+série : 130 % y est normal, un seuil serait donc arbitraire. Un ratio supérieur à 1
 signifie littéralement que le modèle fait moins bien qu'une prévision naïve — un
 critère interprétable sans connaître la série.
 
+La mesure retenue est un **RelMAE** (*relative mean absolute error*) et non le MASE
+d'Hyndman & Koehler (2006). Ce dernier met l'erreur à l'échelle de l'erreur naïve
+mesurée DANS l'échantillon d'entraînement, là où elle est ici mesurée sur la
+fenêtre d'évaluation, aux mêmes dates que le modèle. Le seuil s'interprète de la
+même façon, le dénominateur diffère, donc le nom aussi.
+
 **Conséquences.** `model/monitor.py` réentraîne chaque modèle sur l'historique
-amputé de ses 30 derniers jours et mesure l'erreur sur cette fenêtre. Le contrôle
-alerte sans bloquer, et s'exécute après la publication : sur une PME, mieux vaut
-des prévisions dégradées et signalées que pas de prévisions du tout. Il a
-également mis en évidence que les pôles Maintenance et Vidéosurveillance ne
-comptent qu'environ 295 jours d'activité, en deçà du cycle annuel que leur modèle
-prétend capter.
+amputé de ses trente derniers jours **calendaires** — et non de ses trente
+dernières lignes, les séries ne contenant que les jours d'activité — puis mesure
+l'erreur sur cette fenêtre. Le contrôle alerte sans bloquer, et s'exécute après la
+publication : sur une PME, mieux vaut des prévisions dégradées et signalées que
+pas de prévisions du tout. Il a également mis en évidence que les pôles
+Maintenance et Vidéosurveillance ne comptent qu'environ 295 jours d'activité pour
+730 jours calendaires, soit une densité d'observation de 0,40. Leur saisonnalité
+annuelle reste **identifiable** — c'est l'étendue calendaire de l'historique qui la
+conditionne, la série de Fourier étant indexée sur le jour de l'année, et non le
+nombre d'observations — mais elle est estimée sur des points épars, donc plus
+bruitée. Le contrôle porte sur les deux critères distinctement : une notification
+signale un historique de moins d'un cycle annuel, une autre une densité inférieure
+à 0,5.
