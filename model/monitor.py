@@ -72,7 +72,7 @@ def _annoter(niveau: str, message: str) -> None:
     )
 
 
-def _relmae(reel: pd.Series, prevu: pd.Series, historique: pd.Series) -> float:
+def _relmae(reel: pd.Series, prevu: pd.Series, historique: pd.Series) -> tuple[float, int]:
     """
     Erreur absolue du modèle rapportée à celle d'une prévision naïve saisonnière
     (même jour de la semaine précédente), calculée sur la même fenêtre.
@@ -86,7 +86,14 @@ def _relmae(reel: pd.Series, prevu: pd.Series, historique: pd.Series) -> float:
 
     La référence ne lit que `historique`, borné à la fin de la période
     d'entraînement : elle ne dispose d'aucune observation postérieure à la
-    bascule, exactement comme le modèle.
+    bascule, exactement comme le modèle. Cette borne a une conséquence qu'il
+    faut publier plutôt que taire : au-delà du 28e jour de la fenêtre, aucun
+    des quatre reculs hebdomadaires ne retombe dans l'historique disponible, et
+    la date est écartée du calcul. Le ratio porte donc sur un sous-ensemble de
+    la fenêtre, dont la taille est retournée avec lui — sans quoi le tableau
+    afficherait un effectif qui n'est pas celui de la mesure.
+
+    Retourne (RelMAE, nombre d'observations réellement comparées).
     """
     naif = []
     for date in reel.index:
@@ -100,11 +107,16 @@ def _relmae(reel: pd.Series, prevu: pd.Series, historique: pd.Series) -> float:
 
     naif = pd.Series(naif, index=reel.index)
     valides = naif.notna()
+    n_valides = int(valides.sum())
+
+    if n_valides == 0:
+        return float("nan"), 0
 
     erreur_modele = (reel[valides] - prevu[valides]).abs().mean()
     erreur_naif = (reel[valides] - naif[valides]).abs().mean()
 
-    return float("inf") if erreur_naif == 0 else erreur_modele / erreur_naif
+    ratio = float("inf") if erreur_naif == 0 else erreur_modele / erreur_naif
+    return ratio, n_valides
 
 
 def evaluer_derive(chemin_pkl: Path) -> dict:
@@ -162,6 +174,7 @@ def evaluer_derive(chemin_pkl: Path) -> dict:
     serie_entrainement = entrainement.set_index("ds")["y"]
 
     erreur_abs = (reel - prevu).abs()
+    relmae, n_relmae = _relmae(reel, prevu, serie_entrainement)
     return {
         "modele": label,
         "statut": "mesure",
@@ -169,7 +182,11 @@ def evaluer_derive(chemin_pkl: Path) -> dict:
         "n_jours": FENETRE_VALIDATION,
         "mae": float(erreur_abs.mean()),
         "mape": float((erreur_abs / reel.replace(0, np.nan)).mean() * 100),
-        "relmae": _relmae(reel, prevu, serie_entrainement),
+        "relmae": relmae,
+        # Effectif réellement comparé à la référence naïve, inférieur à n_obs :
+        # au-delà du 28e jour de la fenêtre, aucun recul hebdomadaire ne
+        # retombe dans l'historique d'entraînement (cf. _relmae).
+        "n_relmae": n_relmae,
         # Ce qui rend une saisonnalité annuelle estimable, c'est l'ÉTENDUE
         # CALENDAIRE de l'historique — la série de Fourier est indexée sur le
         # jour de l'année — et non le nombre d'observations. Un pôle à faible
@@ -201,9 +218,13 @@ def main() -> int:
     if mesures:
         # « N obs. » et non « N jours » : la colonne compte les observations
         # tombant dans la fenêtre, dont l'étendue calendaire est fixée par
-        # FENETRE_VALIDATION et rappelée en en-tête.
-        tableau = pd.DataFrame(mesures)[["modele", "n_obs", "mae", "mape", "relmae"]]
-        tableau.columns = ["Modèle", "N obs.", "MAE (FCFA)", "MAPE (%)", "RelMAE"]
+        # FENETRE_VALIDATION et rappelée en en-tête. « N réf. » compte celles
+        # que la référence naïve peut couvrir : MAE et MAPE portent sur la
+        # fenêtre entière, le RelMAE sur ce sous-ensemble.
+        tableau = pd.DataFrame(mesures)[
+            ["modele", "n_obs", "mae", "mape", "relmae", "n_relmae"]
+        ]
+        tableau.columns = ["Modèle", "N obs.", "MAE (FCFA)", "MAPE (%)", "RelMAE", "N réf."]
         tableau["MAE (FCFA)"] = tableau["MAE (FCFA)"].round(0).astype(int)
         tableau["MAPE (%)"] = tableau["MAPE (%)"].round(1)
         tableau["RelMAE"] = tableau["RelMAE"].round(3)
