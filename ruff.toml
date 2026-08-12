@@ -35,8 +35,11 @@ ignore = []
 # Les tests importent des fonctions privées (préfixe _) de façon assumée :
 # c'est leur objet même que de couvrir la logique interne du pipeline.
 "tests/*" = ["E501"]
-# Ces trois modules ajoutent la racine au sys.path avant d'importer les modules
+# Ces modules ajoutent la racine au sys.path avant d'importer les modules
 # du projet — un import ne peut donc pas y précéder du code exécutable.
+# conftest.py relève du même cas : l'import de src.db doit suivre l'insertion
+# dans sys.path, puisque c'est lui qui charge variable.env pour le garde-fou.
+"conftest.py" = ["E402"]
 "model/predict.py" = ["E402"]
 "app/dashboard.py" = ["E402"]
 "app/saisie.py" = ["E402"]

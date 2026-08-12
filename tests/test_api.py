@@ -42,6 +42,33 @@ def cle_api(monkeypatch):
     return CLE_TEST
 
 
+class _MoteurIndisponible:
+    """Moteur factice dont toute ouverture de transaction échoue."""
+
+    def begin(self):
+        raise RuntimeError("hote=db.interne schema=schema_analytics table=facture")
+
+
+@pytest.fixture
+def sans_base(monkeypatch):
+    """
+    Neutralise l'accès à la base pour les tests qui portent sur le contrat.
+
+    Ces tests envoient un POST valide ET authentifié : sans neutralisation, la
+    requête atteint réellement la base désignée par variable.env et y insère une
+    commande. Le test passait alors indifféremment sur un 201 ou sur un 500,
+    c'est-à-dire sans rien établir.
+
+    Le moteur factice rend l'issue unique : la transaction échoue, la route
+    convertit l'exception en 500, et seul un 422 signalerait un contrat trop
+    strict. Le message d'erreur technique est volontairement bavard ici — il ne
+    doit jamais ressortir dans la réponse HTTP.
+    """
+    monkeypatch.setattr(
+        "api.routes.commandes.get_engine", lambda: _MoteurIndisponible()
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Health-check
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,14 +202,15 @@ class TestBornesDeLongueur:
         "champ, limite",
         [("client", 150), ("employe", 150), ("description", 255), ("telephone", 20)],
     )
-    def test_valeur_a_la_borne_exacte_acceptee(self, cle_api, champ, limite):
+    def test_valeur_a_la_borne_exacte_acceptee(self, cle_api, sans_base, champ, limite):
         # Contre-épreuve : la borne est inclusive, une valeur pile à la limite
-        # ne doit pas être rejetée par le contrat. La requête échoue plus loin,
-        # faute de base de données — tout sauf 422 prouve que le contrat passe.
+        # ne doit pas être rejetée par le contrat. L'accès base étant neutralisé,
+        # l'issue est unique — 500 établit que la valeur a franchi la validation
+        # Pydantic, là où un 422 signalerait un contrat trop strict.
         payload = dict(COMMANDE_VALIDE, **{champ: "x" * limite})
         r = client.post("/api/v1/commandes/", json=payload,
                         headers={"X-API-Key": CLE_TEST})
-        assert r.status_code != 422, f"{champ} a exactement {limite} doit passer"
+        assert r.status_code == 500, f"{champ} a exactement {limite} doit passer"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
