@@ -37,7 +37,7 @@ class CommandeIn(BaseModel):
                              description="Description de la prestation")
     quantite: int = Field(..., ge=1, description="Nombre d'unités")
     # Entier et non flottant : le FCFA n'a pas de subdivision en usage, et les
-    # colonnes prix_unitaire / total_ligne sont des BIGINT. Accepter un flottant
+    # colonnes prix_unitaire / total_ligne sont des INTEGER. Accepter un flottant
     # laissait PostgreSQL arrondir silencieusement à l'insertion ; un rejet
     # explicite en 422 vaut mieux qu'une donnée corrigée sans trace.
     prix_unitaire: int = Field(..., gt=0, description="Prix unitaire en FCFA (entier)")

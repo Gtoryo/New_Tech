@@ -176,7 +176,7 @@ def afficher_saisie() -> None:
         "description":      description.strip(),
         "quantite":         int(quantite),
         # Entier : le contrat CommandeIn attend un entier (FCFA sans
-        # subdivision), et la colonne prix_unitaire est un BIGINT.
+        # subdivision), et la colonne prix_unitaire est un INTEGER.
         "prix_unitaire":    int(prix_unitaire),
     }
 
