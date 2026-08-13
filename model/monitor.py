@@ -59,6 +59,14 @@ SEUIL_ERREUR = float(os.getenv("DRIFT_SEUIL_RELMAE", "1.0"))
 # se réduit. Sert de signal précoce avant que la dérive ne devienne bloquante.
 SEUIL_ALERTE = float(os.getenv("DRIFT_SEUIL_ALERTE", "0.85"))
 
+# Effectif minimal de points de comparaison pour qu'un RelMAE soit opposable.
+# Le contrôle porte sur n_relmae et non sur la taille de la fenêtre : le ratio
+# se calcule sur le premier, c'est donc lui qui conditionne sa fiabilité.
+# En exploitation normale, une série dense fournit une vingtaine de points ; en
+# deçà de dix, la valeur ne distingue plus une dérive du modèle d'une simple
+# absence d'activité sur la période, et ne peut pas fonder une alerte.
+MIN_POINTS_RELMAE = int(os.getenv("DRIFT_MIN_POINTS", "10"))
+
 
 def _annoter(niveau: str, message: str) -> None:
     """
@@ -252,10 +260,27 @@ def main() -> int:
     # des séries plus courtes et plus bruitées, ne remontent qu'un avertissement.
     global_ = next((r for r in mesures if r["modele"] == "global"), None)
     en_echec = False
+    global_evalue = False
 
     for r in mesures:
         relmae = r["relmae"]
         est_global = r is global_
+
+        # Effectif insuffisant : la valeur reste publiée dans le tableau, mais
+        # elle ne déclenche rien. Une fenêtre peut compter assez d'observations
+        # pour être mesurée et trop peu de reculs hebdomadaires retombant dans
+        # l'historique pour que le ratio soit stable — c'est le cas dès que
+        # l'activité récente se raréfie.
+        if r["n_relmae"] < MIN_POINTS_RELMAE:
+            _annoter("notice", f"[{r['modele']}] RelMAE {relmae:.3f} calcule sur "
+                               f"{r['n_relmae']} point(s) de comparaison, minimum "
+                               f"{MIN_POINTS_RELMAE} : effectif insuffisant, seuil non "
+                               f"applique. Mesure a reconduire au prochain cycle.")
+            continue
+
+        if est_global:
+            global_evalue = True
+
         if relmae >= SEUIL_ERREUR:
             message = (f"[{r['modele']}] RelMAE {relmae:.3f} >= {SEUIL_ERREUR} : le modele "
                        f"ne fait plus mieux qu une prevision naive. Reentrainement a inspecter.")
@@ -268,9 +293,17 @@ def main() -> int:
             _annoter("warning", f"[{r['modele']}] RelMAE {relmae:.3f} au-dela du seuil d alerte "
                                 f"{SEUIL_ALERTE} : marge en reduction face a la prevision naive.")
 
-    if not en_echec:
+    if en_echec:
+        return 1
+
+    # Ne pas confondre « pas de dérive » et « pas de mesure » : annoncer le
+    # premier quand le modèle global n'a pas pu être évalué donnerait une
+    # assurance que le cycle n'a pas produite.
+    if global_evalue:
         print("Aucune derive detectee sur le modele global.")
-    return 1 if en_echec else 0
+    else:
+        print("Modele global non evalue sur ce cycle : effectif de comparaison insuffisant.")
+    return 0
 
 
 if __name__ == "__main__":
