@@ -44,7 +44,11 @@ jobs:
               shutil.rmtree(p, ignore_errors=True)
           "
 
+      # Aucun test n'accede a la base ici : moindre privilege, et le garde-fou
+      # de conftest.py refuse toute session visant un hote heberge.
       - name: Tests automatisés (A1.3 C3 — validation modèle et pipeline ETL)
+        env:
+          DB_HOST: localhost
         run: pytest tests/ -v
 
       # Rafraîchit schema_ia à partir de schema_analytics, qui contient
