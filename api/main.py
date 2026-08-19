@@ -30,7 +30,7 @@ app.add_middleware(
     allow_headers=["X-API-Key", "Content-Type"],
 )
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────────────────────
 app.include_router(previsions.router, prefix="/api/v1")
 app.include_router(commandes.router,  prefix="/api/v1")
 app.include_router(kpis.router,       prefix="/api/v1")
