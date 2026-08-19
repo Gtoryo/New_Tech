@@ -15,7 +15,7 @@ et ne correspondrait plus au cycle de réentraînement qu'il prétend simuler.
 
 Le seuil porte sur le RelMAE et non sur le MAPE. Le MAPE n'a pas de valeur de
 référence absolue — 130 % est normal sur cette série, comme le montre la section
-4.3 du rapport — alors qu'un RelMAE supérieur à 1 signifie littéralement que le
+2.3.3 du rapport — alors qu'un RelMAE supérieur à 1 signifie littéralement que le
 modèle fait moins bien qu'une prévision naïve qui rejoue la semaine précédente.
 C'est un critère interprétable sans connaître la série.
 

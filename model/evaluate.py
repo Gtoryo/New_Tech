@@ -54,7 +54,7 @@ def metriques_par_horizon(modele: Prophet, label: str) -> pd.DataFrame:
     Cross-validation temporelle à fenêtre croissante (expanding window) : à
     chaque coupure, Prophet est réentraîné sur TOUT l'historique disponible
     jusqu'à cette date, et non sur une fenêtre de largeur fixe.
-    Paramètres cohérents avec la section 4.3 du rapport :
+    Paramètres cohérents avec la section 2.3.3 du rapport :
       initial = 365 jours   (historique minimal d'entraînement)
       period  = 30  jours   (espacement entre les cutoffs)
       horizon = 90  jours   (fenêtre d'évaluation)

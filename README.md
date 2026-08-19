@@ -364,14 +364,14 @@ Les modèles sont réentraînés le 1er de chaque mois par GitHub Actions : les 
 # Restaure les modèles sur lesquels les métriques du rapport ont été mesurées
 git checkout metriques-rapport-v1 -- models/
 
-python model/evaluate.py    # section 4.3 du rapport
-python model/monitor.py     # section 5.2 du rapport
+python model/evaluate.py    # section 2.3.3 du rapport
+python model/monitor.py     # section 2.4.2 du rapport
 
 # Revenir aux modèles courants
 git checkout HEAD -- models/
 ```
 
-> Le tag épingle les **modèles**, pas les scripts : une correction apportée à `evaluate.py` ou `monitor.py` change légitimement les valeurs produites sur ces mêmes modèles. C'est arrivé une fois, et le rapport en tient compte — voir la note de méthode de la section 4.3 sur le bornage des prévisions de référence au point de coupure.
+> Le tag épingle les **modèles**, pas les scripts : une correction apportée à `evaluate.py` ou `monitor.py` change légitimement les valeurs produites sur ces mêmes modèles. C'est arrivé une fois, et le rapport en tient compte — voir la note de méthode de la section 2.3.3 sur le bornage des prévisions de référence au point de coupure.
 
 Les deux scripts fixent la graine du générateur aléatoire (`SEED = 42`) : Prophet échantillonnant les bornes d'intervalle via le générateur global de numpy, deux exécutions sur les mêmes modèles produisent sans cela des valeurs de coverage différentes. Avec la graine, les chiffres sont strictement reproductibles.
 

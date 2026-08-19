@@ -61,7 +61,7 @@ def agreger_previsions_au_mois(df_prev: pd.DataFrame, jours_min: int = 20) -> pd
     La prévision centrale s'additionne : l'espérance d'une somme est la somme des
     espérances. Les bornes de l'intervalle, non — les sommer reviendrait à
     supposer les erreurs journalières parfaitement corrélées. C'est faux, et la
-    section 4.3 du rapport le mesure : le MAPE tombe de 133 % en journalier à
+    section 2.3.3 du rapport le mesure : le MAPE tombe de 133 % en journalier à
     17,4 % en mensuel précisément parce que les écarts de signes opposés se
     compensent. Sous indépendance approximative, la demi-largeur d'un cumul de
     n jours croît en √n et non en n — sommer les bornes élargirait l'intervalle

@@ -9,7 +9,7 @@ Ils s'exécutent sans serveur ni base de données : le client de test Starlette
 appelle l'application ASGI en mémoire, et tous les cas couverts sont rejetés
 par l'API (401/422) avant qu'aucune requête SQL ne soit émise. Les scénarios
 nécessitant une écriture réelle en base relèvent du test de bout en bout sur
-une instance PostgreSQL dédiée (perspective documentée en section 5.1).
+une instance PostgreSQL dédiée (perspective documentée en section 2.4.1).
 """
 
 import pytest
